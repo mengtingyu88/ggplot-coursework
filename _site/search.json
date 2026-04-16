@@ -1,0 +1,16 @@
+[
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "ggplot2 Coursework",
+    "section": "",
+    "text": "library(tidyverse)\n\n── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──\n✔ dplyr     1.2.1     ✔ readr     2.2.0\n✔ forcats   1.0.1     ✔ stringr   1.6.0\n✔ ggplot2   4.0.2     ✔ tibble    3.3.1\n✔ lubridate 1.9.5     ✔ tidyr     1.3.2\n✔ purrr     1.2.2     \n── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──\n✖ dplyr::filter() masks stats::filter()\n✖ dplyr::lag()    masks stats::lag()\nℹ Use the conflicted package (&lt;http://conflicted.r-lib.org/&gt;) to force all conflicts to become errors\n\nexam_data &lt;- read_csv(\"chap01/data/Exam_data.csv\", show_col_types = FALSE)\n\n\n1.3.1 R Graphics VS ggplot2\n\nBase R Graphics\n\nhist(exam_data$MATHS)\n\n\n\n\n\n\n\n\n\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram()\n\n`stat_bin()` using `bins = 30`. Pick better value `binwidth`.\n\n\n\n\n\n\n\n\n\n\n\n\n1.5 ggplot data\n\nggplot(data = exam_data)\n\n\n\n\n\n\n\n\n\n\n1.6 Aesthetic mappings\n\nggplot(data = exam_data,\n       aes(x = MATHS))\n\n\n\n\n\n\n\n\n\n\nHistogram\n\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20)\n\n\n\n\n\n\n\n\n\n\nScatterplot\n\nggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +\n  geom_point()\n\n\n\n\n\n\n\n\n\n\nBoxplot\n\nggplot(exam_data, aes(x = GENDER, y = MATHS)) +\n  geom_boxplot()\n\n\n\n\n\n\n\n\n\n\nFacet wrap\n\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20) +\n  facet_wrap(~ CLASS)\n\n\n\n\n\n\n\n\n\n\n1.10 Coordinates\n\nDefault bar chart\n\nggplot(data = exam_data,\n       aes(x = RACE)) +\n  geom_bar()\n\n\n\n\n\n\n\n\n\n\ncoord_flip()\n\nggplot(data = exam_data,\n       aes(x = RACE)) +\n  geom_bar() +\n  coord_flip()\n\n\n\n\n\n\n\n\n\n\nScatterplot\n\nggplot(data = exam_data,\n       aes(x = MATHS, y = ENGLISH)) +\n  geom_point() +\n  geom_smooth(method = lm, size = 0.5)\n\nWarning: Using `size` aesthetic for lines was deprecated in ggplot2 3.4.0.\nℹ Please use `linewidth` instead.\n\n\n`geom_smooth()` using formula = 'y ~ x'\n\n\n\n\n\n\n\n\n\n\n\ncoord_cartesian\n\nggplot(data = exam_data,\n       aes(x = MATHS, y = ENGLISH)) +\n  geom_point() +\n  geom_smooth(method = lm, size = 0.5) +\n  coord_cartesian(xlim = c(0,100),\n                  ylim = c(0,100))\n\n`geom_smooth()` using formula = 'y ~ x'\n\n\n\n\n\n\n\n\n\n\n\n\n1.11 Themes\n\ntheme_gray()\n\nggplot(data = exam_data,\n       aes(x = RACE)) +\n  geom_bar() +\n  coord_flip() +\n  theme_gray()\n\n\n\n\n\n\n\n\n\n\ntheme_classic()\n\nggplot(data = exam_data,\n       aes(x = RACE)) +\n  geom_bar() +\n  coord_flip() +\n  theme_classic()\n\n\n\n\n\n\n\n\n\n\ntheme_minimal()\n\nggplot(data = exam_data,\n       aes(x = RACE)) +\n  geom_bar() +\n  coord_flip() +\n  theme_minimal()"
+  },
+  {
+    "objectID": "about.html",
+    "href": "about.html",
+    "title": "About",
+    "section": "",
+    "text": "About this site\n\n1 + 1\n\n[1] 2"
+  }
+]

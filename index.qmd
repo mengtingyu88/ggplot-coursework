@@ -1,0 +1,130 @@
+```{r}
+library(tidyverse)
+
+exam_data <- read_csv("chap01/data/Exam_data.csv", show_col_types = FALSE)
+```
+
+---
+title: "ggplot2 Coursework"
+format: html
+editor: visual
+---
+
+### 1.3.1 R Graphics VS ggplot2
+
+#### Base R Graphics
+```{r} 
+hist(exam_data$MATHS)
+```
+```{r} 
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram()
+```
+### 1.5 ggplot data
+
+```{r}
+ggplot(data = exam_data)
+```
+### 1.6 Aesthetic mappings
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = MATHS))
+```
+### Histogram
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20)
+```
+### Scatterplot
+
+```{r}
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point()
+```
+### Boxplot
+
+```{r}
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot()
+```
+### Facet wrap
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~ CLASS)
+```
+### 1.10 Coordinates
+
+#### Default bar chart
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = RACE)) +
+  geom_bar()
+```
+#### coord_flip()
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = RACE)) +
+  geom_bar() +
+  coord_flip()
+```
+#### Scatterplot
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = MATHS, y = ENGLISH)) +
+  geom_point() +
+  geom_smooth(method = lm, size = 0.5)
+```
+#### coord_cartesian
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = MATHS, y = ENGLISH)) +
+  geom_point() +
+  geom_smooth(method = lm, size = 0.5) +
+  coord_cartesian(xlim = c(0,100),
+                  ylim = c(0,100))
+```
+### 1.11 Themes
+
+#### theme_gray()
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = RACE)) +
+  geom_bar() +
+  coord_flip() +
+  theme_gray()
+```
+#### theme_classic()
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = RACE)) +
+  geom_bar() +
+  coord_flip() +
+  theme_classic()
+```
+#### theme_minimal()
+
+```{r}
+ggplot(data = exam_data,
+       aes(x = RACE)) +
+  geom_bar() +
+  coord_flip() +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
