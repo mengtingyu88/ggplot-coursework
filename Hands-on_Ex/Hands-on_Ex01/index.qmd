@@ -1,0 +1,451 @@
+---
+title: "Hands-on Exercise 1: A Layered Grammar of Graphics"
+author: "Meng Tingyu"
+date: "2026-04-15"
+date-modified: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+---
+
+## 1. Overview
+
+This exercise explores the foundational principles of **ggplot2**, an R package for declaratively creating data-driven graphics based on Leland Wilkinson's *Grammar of Graphics*. Unlike Base R graphics which relies on a series of function calls, ggplot2 adopts a structured **layered approach** that makes visualisations more readable, reproducible, and aesthetically consistent.
+
+The key idea behind ggplot2 can be summarised as:
+
+> *"The transferable skills from ggplot2 are not the idiosyncrasies of plotting syntax, but a powerful way of thinking about visualisation, as a way of mapping between variables and the visual properties of geometric objects that you can perceive."* — Hadley Wickham
+
+---
+
+## 2. Getting Started
+
+### 2.1 Loading Required Libraries
+
+```{r}
+pacman::p_load(tidyverse)
+```
+
+### 2.2 Importing the Dataset
+
+```{r}
+exam_data <- read_csv("data/Exam_data.csv")
+glimpse(exam_data)
+```
+
+The dataset contains year-end examination grades of a cohort of Primary 3 students from a local school. It consists of **seven attributes**:
+
+| Type | Variables |
+|------|-----------|
+| Categorical | ID, CLASS, GENDER, RACE |
+| Continuous | MATHS, ENGLISH, SCIENCE |
+
+---
+
+## 3. The Grammar of Graphics
+
+ggplot2 builds every plot from **seven layered components**. Understanding these components is essential to constructing meaningful visualisations.
+
+| Component | Role |
+|-----------|------|
+| **Data** | The dataset being plotted |
+| **Aesthetics** | Maps data variables to visual properties (position, colour, size, shape) |
+| **Geometrics** | The visual marks used to represent data (points, bars, lines) |
+| **Facets** | Splits data into subplots by a categorical variable |
+| **Statistics** | Applies statistical transformations (mean, confidence intervals) |
+| **Coordinates** | Defines the plane on which data is mapped |
+| **Themes** | Controls non-data elements such as background and fonts |
+
+A plot is built by stacking these layers using the `+` operator.
+
+---
+
+## 4. Base R Graphics vs ggplot2
+
+To appreciate the advantages of ggplot2, it is useful to compare it with Base R graphics using the same dataset.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Base R: hist()"
+#|   - "ggplot2: geom_histogram()"
+
+# Base R
+hist(exam_data$MATHS,
+     main = "Distribution of Maths Scores",
+     xlab = "Maths Score",
+     col = "grey80")
+
+# ggplot2
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 fill = "steelblue",
+                 color = "white") +
+  labs(title = "Distribution of Maths Scores",
+       x = "Maths Score",
+       y = "Count") +
+  theme_minimal()
+```
+
+While Base R offers a quick way to produce plots, ggplot2 provides a more systematic and extensible framework, especially when dealing with complex multi-layered visualisations.
+
+---
+
+## 5. Essential Geometric Objects
+
+Geometric objects (geoms) define **what type of mark** is drawn on the plot. Below are the key geoms introduced in this exercise.
+
+### 5.1 Bar Chart — `geom_bar()`
+
+Used to visualise the frequency of a categorical variable.
+
+```{r}
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Number of Students by Race",
+       x = "Race", y = "Count") +
+  theme_minimal()
+```
+
+### 5.2 Dot Plot — `geom_dotplot()`
+
+Each dot represents one observation. Useful for small datasets to see individual data points.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_dotplot(binwidth = 2.5,
+               dotsize = 0.5,
+               fill = "steelblue") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Dot Plot of Maths Scores",
+       x = "Maths Score") +
+  theme_minimal()
+```
+
+::: callout-note
+The y-axis is suppressed here as it does not carry meaningful information in a dot plot.
+:::
+
+### 5.3 Histogram — `geom_histogram()`
+
+Used to visualise the distribution of a continuous variable.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Default histogram"
+#|   - "Coloured by gender"
+
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 fill = "steelblue",
+                 color = "white") +
+  labs(title = "Maths Score Distribution",
+       x = "Maths Score", y = "Count") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = MATHS, fill = GENDER)) +
+  geom_histogram(bins = 20,
+                 color = "grey30") +
+  labs(title = "Maths Score Distribution by Gender",
+       x = "Maths Score", y = "Count") +
+  theme_minimal()
+```
+
+### 5.4 Kernel Density Plot — `geom_density()`
+
+A smoothed version of the histogram, useful for visualising the underlying distribution.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS, colour = GENDER)) +
+  geom_density(linewidth = 0.8) +
+  labs(title = "Kernel Density Estimate of Maths Scores by Gender",
+       x = "Maths Score", y = "Density") +
+  theme_minimal()
+```
+
+### 5.5 Boxplot — `geom_boxplot()`
+
+Displays the five-number summary (minimum, Q1, median, Q3, maximum) and highlights outliers.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Standard boxplot"
+#|   - "Notched boxplot"
+
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.6) +
+  labs(title = "Maths Scores by Gender",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot(notch = TRUE,
+               fill = "steelblue", alpha = 0.6) +
+  labs(title = "Notched Boxplot of Maths Scores by Gender",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+```
+
+::: callout-tip
+If the notches of two boxplots do not overlap, there is strong evidence that their medians differ.
+:::
+
+### 5.6 Violin Plot — `geom_violin()`
+
+Combines a boxplot with a kernel density estimate, showing both summary statistics and the full distribution shape.
+
+```{r}
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_violin(fill = "steelblue", alpha = 0.6) +
+  labs(title = "Violin Plot of Maths Scores by Gender",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+```
+
+### 5.7 Scatterplot — `geom_point()`
+
+Used to visualise the relationship between two continuous variables.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.6, colour = "steelblue") +
+  labs(title = "Maths vs English Scores",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+### 5.8 Combining Geoms
+
+Multiple geoms can be layered on the same plot using `+`.
+
+```{r}
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot() +
+  geom_point(position = "jitter",
+             size = 0.5,
+             alpha = 0.4,
+             colour = "steelblue") +
+  labs(title = "Boxplot with Jittered Data Points",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+```
+
+---
+
+## 6. Statistical Transformations
+
+Statistical functions (`stat_*`) allow us to overlay computed summaries on top of raw data.
+
+### 6.1 Adding Mean to Boxplot
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Using stat_summary()"
+#|   - "Using geom_point(stat = 'summary')"
+
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot() +
+  stat_summary(geom = "point",
+               fun = "mean",
+               colour = "red",
+               size = 4) +
+  labs(title = "stat_summary() method",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = GENDER, y = MATHS)) +
+  geom_boxplot() +
+  geom_point(stat = "summary",
+             fun = "mean",
+             colour = "red",
+             size = 4) +
+  labs(title = "geom_point(stat = 'summary') method",
+       x = "Gender", y = "Maths Score") +
+  theme_minimal()
+```
+
+### 6.2 Best Fit Curve — `geom_smooth()`
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "LOESS smoothing (default)"
+#|   - "Linear model"
+
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(linewidth = 0.8) +
+  labs(title = "LOESS Smoothing",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, linewidth = 0.8) +
+  labs(title = "Linear Model",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+---
+
+## 7. Facets
+
+Facets generate **small multiples** — the same plot repeated across subsets of data. This is particularly useful for comparing distributions across groups.
+
+### 7.1 `facet_wrap()`
+
+Wraps panels into a 2D grid, ideal for a single grouping variable.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 fill = "steelblue",
+                 color = "white") +
+  facet_wrap(~ CLASS) +
+  labs(title = "Maths Score Distribution by Class",
+       x = "Maths Score", y = "Count") +
+  theme_minimal()
+```
+
+### 7.2 `facet_grid()`
+
+Forms a matrix of panels defined by two grouping variables.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 fill = "steelblue",
+                 color = "white") +
+  facet_grid(~ CLASS) +
+  labs(title = "Maths Score Distribution by Class (facet_grid)",
+       x = "Maths Score", y = "Count") +
+  theme_minimal()
+```
+
+---
+
+## 8. Coordinates
+
+Coordinate systems control how data is mapped onto the 2D plane of the plot.
+
+### 8.1 `coord_flip()`
+
+Flips the x and y axes — useful for horizontal bar charts with long category labels.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Vertical bar chart (default)"
+#|   - "Horizontal bar chart (coord_flip)"
+
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Default: Vertical",
+       x = "Race", y = "Count") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Flipped: Horizontal",
+       x = "Race", y = "Count") +
+  theme_minimal()
+```
+
+### 8.2 `coord_cartesian()` — Fixing Axis Ranges
+
+Setting equal axis ranges ensures scatterplots are not visually misleading.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "Default axis range"
+#|   - "Fixed axis range (0–100)"
+
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, linewidth = 0.5) +
+  labs(title = "Default Axis Range",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+
+ggplot(exam_data, aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, linewidth = 0.5) +
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100)) +
+  labs(title = "Fixed Axis Range (0–100)",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+---
+
+## 9. Themes
+
+Themes control the **non-data elements** of a plot: background colour, grid lines, font sizes, and axis labels.
+
+```{r}
+#| layout-ncol: 3
+#| fig-cap:
+#|   - "theme_gray() — default"
+#|   - "theme_classic()"
+#|   - "theme_minimal()"
+
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "theme_gray()") +
+  theme_gray()
+
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "theme_classic()") +
+  theme_classic()
+
+ggplot(exam_data, aes(x = RACE)) +
+  geom_bar(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "theme_minimal()") +
+  theme_minimal()
+```
+
+::: callout-tip
+`theme_minimal()` is generally preferred in academic and data journalism contexts as it reduces visual clutter and keeps the focus on the data.
+:::
+
+---
+
+## 10. Key Takeaways
+
+This exercise demonstrates that ggplot2's layered grammar provides a principled and flexible framework for building statistical graphics. The key insights are:
+
+- **Start with data and aesthetics** — define what variables map to which visual properties
+- **Choose the right geom** — different geoms suit different data types and analytical goals
+- **Layer deliberately** — combining geoms (e.g. boxplot + jitter) reveals more information than either alone
+- **Use facets for comparison** — small multiples are more effective than overloaded single plots
+- **Apply statistical summaries** — overlaying means or trend lines adds analytical value
+- **Fix axis ranges** — always set equal axis limits when comparing two variables on the same scale
+- **Choose themes purposefully** — `theme_minimal()` or `theme_classic()` are generally preferred for clean, publication-ready visuals
+
+---
+
+## References
+
+- Hadley Wickham (2010). "A layered grammar of graphics." *Journal of Computational and Graphical Statistics*, 19(1), 3–28.
+- Leland Wilkinson (1999). *Grammar of Graphics*. Springer.
+- Garrett Grolemund & Hadley Wickham (2023). *R for Data Science (2e)*. O'Reilly.
+

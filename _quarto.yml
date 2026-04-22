@@ -2,11 +2,13 @@ project:
   type: website
 
 website:
-  title: "ggplot-coursework"
+  title: "ISSS608-VAA"
   navbar:
     left:
       - href: index.qmd
         text: Home
+      - href: Hands-on_Ex/Hands-on_Ex01/index.qmd
+        text: "Hands-on Ex 1"
       - about.qmd
 
 format:
@@ -18,4 +20,3 @@ format:
     toc: true
 
 editor: visual
-
