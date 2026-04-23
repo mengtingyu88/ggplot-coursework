@@ -1,0 +1,298 @@
+---
+title: "Hands-on Exercise 2: Beyond ggplot2 Fundamentals"
+author: "Meng Tingyu"
+date: "2026-04-23"
+date-modified: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+---
+
+## 1. Overview
+
+This exercise builds on the foundations of ggplot2 by introducing four powerful extension packages that enhance the quality and communicability of statistical graphics:
+
+| Package | Purpose |
+|---------|---------|
+| **ggrepel** | Automatically repositions overlapping text labels on plots |
+| **ggthemes** | Provides additional publication-ready themes (e.g. The Economist, WSJ) |
+| **hrbrthemes** | Provides typography-focused themes optimised for readability |
+| **patchwork** | Combines multiple ggplot2 plots into a single composite figure |
+
+By the end of this exercise, you will be able to produce clean, professional-quality visualisations suitable for academic and industry reporting.
+
+---
+
+## 2. Getting Started
+
+### 2.1 Loading Required Libraries
+
+```{r}
+pacman::p_load(ggrepel, patchwork,
+               ggthemes, hrbrthemes,
+               tidyverse)
+```
+
+### 2.2 Importing the Dataset
+
+```{r}
+exam_data <- read_csv("data/Exam_data.csv")
+glimpse(exam_data)
+```
+
+The dataset contains year-end examination grades of Primary 3 students, with four categorical variables (ID, CLASS, GENDER, RACE) and three continuous variables (MATHS, ENGLISH, SCIENCE).
+
+---
+
+## 3. Beyond ggplot2 Annotation: ggrepel
+
+When plotting a scatterplot with many data points, adding labels using `geom_label()` or `geom_text()` often results in **overlapping text** that is difficult to read.
+
+### 3.1 The Problem: Overlapping Labels
+
+```{r}
+ggplot(exam_data,
+       aes(x = MATHS, y = ENGLISH)) +
+  geom_point() +
+  geom_smooth(method = lm, linewidth = 0.5) +
+  geom_label(aes(label = ID),
+             hjust = 0.5,
+             vjust = -0.5) +
+  coord_cartesian(xlim = c(0, 100),
+                  ylim = c(0, 100)) +
+  labs(title = "English scores versus Maths scores for Primary 3",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+
+### 3.2 The Solution: ggrepel
+
+`ggrepel` solves this by automatically adjusting label positions to avoid overlap. Simply replace:
+
+- `geom_label()` → `geom_label_repel()`
+- `geom_text()` → `geom_text_repel()`
+
+```{r}
+ggplot(exam_data,
+       aes(x = MATHS, y = ENGLISH)) +
+  geom_point() +
+  geom_smooth(method = lm, linewidth = 0.5) +
+  geom_label_repel(aes(label = ID),
+                   fontface = "bold",
+                   max.overlaps = 20) +
+  coord_cartesian(xlim = c(0, 100),
+                  ylim = c(0, 100)) +
+  labs(title = "English scores versus Maths scores for Primary 3",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+
+---
+
+## 4. Beyond ggplot2 Themes
+
+### 4.1 Built-in ggplot2 Themes
+
+ggplot2 comes with eight built-in themes. The most commonly used are:
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "theme_gray() — default"
+#|   - "theme_classic()"
+
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_gray()
+
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_classic()
+```
+
+### 4.2 ggthemes Package
+
+`ggthemes` provides themes that replicate the visual style of well-known publications and tools, such as The Economist, FiveThirtyEight, The Wall Street Journal, and Stata.
+
+```{r}
+#| layout-ncol: 2
+#| fig-cap:
+#|   - "theme_economist()"
+#|   - "theme_wsj()"
+
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_economist()
+
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_wsj()
+```
+
+
+### 4.3 hrbrthemes Package
+
+`hrbrthemes` focuses on **typographic clarity** — it optimises font sizes, label placement, and grid lines for readability in a production workflow.
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_ipsum()
+```
+
+We can further customise the typography using additional arguments:
+
+```{r}
+ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  labs(title = "Distribution of Maths Scores") +
+  theme_ipsum(axis_title_size = 18,
+              base_size = 15,
+              grid = "Y")
+```
+
+
+---
+
+## 5. Beyond Single Graph: patchwork
+
+In data storytelling, a single chart is rarely sufficient. `patchwork` allows us to **combine multiple ggplot2 plots** into one cohesive composite figure using simple, intuitive operators.
+
+### 5.1 Creating the Individual Plots
+
+We first create three plots separately and store them as objects:
+
+```{r}
+p1 <- ggplot(exam_data, aes(x = MATHS)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  coord_cartesian(xlim = c(0, 100)) +
+  labs(title = "Distribution of Maths Scores") +
+  theme_minimal()
+
+p2 <- ggplot(exam_data, aes(x = ENGLISH)) +
+  geom_histogram(bins = 20,
+                 boundary = 100,
+                 color = "grey25",
+                 fill = "grey90") +
+  coord_cartesian(xlim = c(0, 100)) +
+  labs(title = "Distribution of English Scores") +
+  theme_minimal()
+
+p3 <- ggplot(exam_data,
+             aes(x = MATHS, y = ENGLISH)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = lm, linewidth = 0.5) +
+  coord_cartesian(xlim = c(0, 100),
+                  ylim = c(0, 100)) +
+  labs(title = "English vs Maths Scores",
+       x = "Maths Score", y = "English Score") +
+  theme_minimal()
+```
+
+### 5.2 Two-Column Layout: `+`
+
+The `+` operator places two plots **side by side**:
+
+```{r}
+p1 + p2
+```
+
+### 5.3 Three-Plot Composite Layout
+
+Using a combination of `/` (stack vertically) and `|` (place side by side):
+
+```{r}
+(p1 / p2) | p3
+```
+
+
+### 5.4 Adding Tags to Subplots
+
+`plot_annotation()` automatically labels each subplot, making it easy to reference them in text:
+
+```{r}
+((p1 / p2) | p3) +
+  plot_annotation(tag_levels = "I")
+```
+
+
+### 5.5 Inset Plot
+
+`inset_element()` allows you to embed a smaller plot **inside** a larger one, useful for showing a zoomed-in view or a supplementary chart:
+
+```{r}
+p3 + inset_element(p2,
+                   left = 0.02,
+                   bottom = 0.7,
+                   right = 0.5,
+                   top = 1)
+```
+
+
+### 5.6 Combining patchwork with ggthemes
+
+The `&` operator applies a theme to **all plots** in a patchwork composite simultaneously:
+
+```{r}
+patchwork <- (p1 / p2) | p3
+patchwork & theme_economist()
+```
+
+::: callout-note
+Notice the difference between `+` and `&` in patchwork:
+
+- `+` adds elements to the **last plot** only
+- `&` applies the element to **all plots** in the composite
+:::
+
+---
+
+## 6. Key Takeaways
+
+This exercise let me learn how ggplot2 extensions can significantly elevate the quality of statistical graphics:
+
+- **ggrepel** solves the overlapping label problem automatically — always prefer `geom_label_repel()` over `geom_label()` when labelling individual data points
+- **ggthemes** provides ready-made publication themes that immediately give your plots a professional appearance
+- **hrbrthemes** is particularly useful when typography and readability are a priority
+- **patchwork** makes it easy to tell a multi-panel visual story with minimal code — use `/` to stack, `|` to place side by side, and `&` to apply themes globally
+- Composite figures with `plot_annotation(tag_levels = "I")` are especially important in academic writing where subplots need to be referenced in text
+
+---
+

@@ -18,7 +18,7 @@
     "href": "index.html#hands-on-exercises",
     "title": "ISSS608 Visual Analytics",
     "section": "Hands-on Exercises",
-    "text": "Hands-on Exercises\n\nHands-on Exercise 1 - ggplot2 Basics"
+    "text": "Hands-on Exercises\n\nHands-on Exercise 1 - ggplot2 Basics\nHands-on Exercise 2 - Beyond ggplot2"
   },
   {
     "objectID": "Hands-on_Ex/Hands-on_Ex01/index.html",
@@ -124,5 +124,54 @@
     "title": "Hands-on Exercise 1: A Layered Grammar of Graphics",
     "section": "References",
     "text": "References\n\nHadley Wickham (2010). “A layered grammar of graphics.” Journal of Computational and Graphical Statistics, 19(1), 3–28.\nLeland Wilkinson (1999). Grammar of Graphics. Springer.\nGarrett Grolemund & Hadley Wickham (2023). R for Data Science (2e). O’Reilly."
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "",
+    "text": "This exercise builds on the foundations of ggplot2 by introducing four powerful extension packages that enhance the quality and communicability of statistical graphics:\n\n\n\n\n\n\n\nPackage\nPurpose\n\n\n\n\nggrepel\nAutomatically repositions overlapping text labels on plots\n\n\nggthemes\nProvides additional publication-ready themes (e.g. The Economist, WSJ)\n\n\nhrbrthemes\nProvides typography-focused themes optimised for readability\n\n\npatchwork\nCombines multiple ggplot2 plots into a single composite figure\n\n\n\nBy the end of this exercise, you will be able to produce clean, professional-quality visualisations suitable for academic and industry reporting."
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#overview",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#overview",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "",
+    "text": "This exercise builds on the foundations of ggplot2 by introducing four powerful extension packages that enhance the quality and communicability of statistical graphics:\n\n\n\n\n\n\n\nPackage\nPurpose\n\n\n\n\nggrepel\nAutomatically repositions overlapping text labels on plots\n\n\nggthemes\nProvides additional publication-ready themes (e.g. The Economist, WSJ)\n\n\nhrbrthemes\nProvides typography-focused themes optimised for readability\n\n\npatchwork\nCombines multiple ggplot2 plots into a single composite figure\n\n\n\nBy the end of this exercise, you will be able to produce clean, professional-quality visualisations suitable for academic and industry reporting."
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#getting-started",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#getting-started",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "2. Getting Started",
+    "text": "2. Getting Started\n\n2.1 Loading Required Libraries\n\n\nShow code\npacman::p_load(ggrepel, patchwork,\n               ggthemes, hrbrthemes,\n               tidyverse)\n\n\n\n\n2.2 Importing the Dataset\n\n\nShow code\nexam_data &lt;- read_csv(\"data/Exam_data.csv\")\nglimpse(exam_data)\n\n\nRows: 322\nColumns: 7\n$ ID      &lt;chr&gt; \"Student321\", \"Student305\", \"Student289\", \"Student227\", \"Stude…\n$ CLASS   &lt;chr&gt; \"3I\", \"3I\", \"3H\", \"3F\", \"3I\", \"3I\", \"3I\", \"3I\", \"3I\", \"3H\", \"3…\n$ GENDER  &lt;chr&gt; \"Male\", \"Female\", \"Male\", \"Male\", \"Male\", \"Female\", \"Male\", \"M…\n$ RACE    &lt;chr&gt; \"Malay\", \"Malay\", \"Chinese\", \"Chinese\", \"Malay\", \"Malay\", \"Chi…\n$ ENGLISH &lt;dbl&gt; 21, 24, 26, 27, 27, 31, 31, 31, 33, 34, 34, 36, 36, 36, 37, 38…\n$ MATHS   &lt;dbl&gt; 9, 22, 16, 77, 11, 16, 21, 18, 19, 49, 39, 35, 23, 36, 49, 30,…\n$ SCIENCE &lt;dbl&gt; 15, 16, 16, 31, 25, 16, 25, 27, 15, 37, 42, 22, 32, 36, 35, 45…\n\n\nThe dataset contains year-end examination grades of Primary 3 students, with four categorical variables (ID, CLASS, GENDER, RACE) and three continuous variables (MATHS, ENGLISH, SCIENCE)."
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-ggplot2-annotation-ggrepel",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-ggplot2-annotation-ggrepel",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "3. Beyond ggplot2 Annotation: ggrepel",
+    "text": "3. Beyond ggplot2 Annotation: ggrepel\nWhen plotting a scatterplot with many data points, adding labels using geom_label() or geom_text() often results in overlapping text that is difficult to read.\n\n3.1 The Problem: Overlapping Labels\n\n\nShow code\nggplot(exam_data,\n       aes(x = MATHS, y = ENGLISH)) +\n  geom_point() +\n  geom_smooth(method = lm, linewidth = 0.5) +\n  geom_label(aes(label = ID),\n             hjust = 0.5,\n             vjust = -0.5) +\n  coord_cartesian(xlim = c(0, 100),\n                  ylim = c(0, 100)) +\n  labs(title = \"English scores versus Maths scores for Primary 3\",\n       x = \"Maths Score\", y = \"English Score\") +\n  theme_minimal()\n\n\n\n\n\n\n\n\n\n\n\n3.2 The Solution: ggrepel\nggrepel solves this by automatically adjusting label positions to avoid overlap. Simply replace:\n\ngeom_label() → geom_label_repel()\ngeom_text() → geom_text_repel()\n\n\n\nShow code\nggplot(exam_data,\n       aes(x = MATHS, y = ENGLISH)) +\n  geom_point() +\n  geom_smooth(method = lm, linewidth = 0.5) +\n  geom_label_repel(aes(label = ID),\n                   fontface = \"bold\",\n                   max.overlaps = 20) +\n  coord_cartesian(xlim = c(0, 100),\n                  ylim = c(0, 100)) +\n  labs(title = \"English scores versus Maths scores for Primary 3\",\n       x = \"Maths Score\", y = \"English Score\") +\n  theme_minimal()"
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-ggplot2-themes",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-ggplot2-themes",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "4. Beyond ggplot2 Themes",
+    "text": "4. Beyond ggplot2 Themes\n\n4.1 Built-in ggplot2 Themes\nggplot2 comes with eight built-in themes. The most commonly used are:\n\nShow code\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_gray()\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_classic()\n\n\n\n\n\n\n\ntheme_gray() — default\n\n\n\n\n\n\n\ntheme_classic()\n\n\n\n\n\n\n\n4.2 ggthemes Package\nggthemes provides themes that replicate the visual style of well-known publications and tools, such as The Economist, FiveThirtyEight, The Wall Street Journal, and Stata.\n\nShow code\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_economist()\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_wsj()\n\n\n\n\n\n\n\ntheme_economist()\n\n\n\n\n\n\n\ntheme_wsj()\n\n\n\n\n\n\n\n4.3 hrbrthemes Package\nhrbrthemes focuses on typographic clarity — it optimises font sizes, label placement, and grid lines for readability in a production workflow.\n\n\nShow code\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_ipsum()\n\n\n\n\n\n\n\n\n\nWe can further customise the typography using additional arguments:\n\n\nShow code\nggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_ipsum(axis_title_size = 18,\n              base_size = 15,\n              grid = \"Y\")"
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-single-graph-patchwork",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#beyond-single-graph-patchwork",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "5. Beyond Single Graph: patchwork",
+    "text": "5. Beyond Single Graph: patchwork\nIn data storytelling, a single chart is rarely sufficient. patchwork allows us to combine multiple ggplot2 plots into one cohesive composite figure using simple, intuitive operators.\n\n5.1 Creating the Individual Plots\nWe first create three plots separately and store them as objects:\n\n\nShow code\np1 &lt;- ggplot(exam_data, aes(x = MATHS)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  coord_cartesian(xlim = c(0, 100)) +\n  labs(title = \"Distribution of Maths Scores\") +\n  theme_minimal()\n\np2 &lt;- ggplot(exam_data, aes(x = ENGLISH)) +\n  geom_histogram(bins = 20,\n                 boundary = 100,\n                 color = \"grey25\",\n                 fill = \"grey90\") +\n  coord_cartesian(xlim = c(0, 100)) +\n  labs(title = \"Distribution of English Scores\") +\n  theme_minimal()\n\np3 &lt;- ggplot(exam_data,\n             aes(x = MATHS, y = ENGLISH)) +\n  geom_point(alpha = 0.6) +\n  geom_smooth(method = lm, linewidth = 0.5) +\n  coord_cartesian(xlim = c(0, 100),\n                  ylim = c(0, 100)) +\n  labs(title = \"English vs Maths Scores\",\n       x = \"Maths Score\", y = \"English Score\") +\n  theme_minimal()\n\n\n\n\n5.2 Two-Column Layout: +\nThe + operator places two plots side by side:\n\n\nShow code\np1 + p2\n\n\n\n\n\n\n\n\n\n\n\n5.3 Three-Plot Composite Layout\nUsing a combination of / (stack vertically) and | (place side by side):\n\n\nShow code\n(p1 / p2) | p3\n\n\n\n\n\n\n\n\n\n\n\n5.4 Adding Tags to Subplots\nplot_annotation() automatically labels each subplot, making it easy to reference them in text:\n\n\nShow code\n((p1 / p2) | p3) +\n  plot_annotation(tag_levels = \"I\")\n\n\n\n\n\n\n\n\n\n\n\n5.5 Inset Plot\ninset_element() allows you to embed a smaller plot inside a larger one, useful for showing a zoomed-in view or a supplementary chart:\n\n\nShow code\np3 + inset_element(p2,\n                   left = 0.02,\n                   bottom = 0.7,\n                   right = 0.5,\n                   top = 1)\n\n\n\n\n\n\n\n\n\n\n\n5.6 Combining patchwork with ggthemes\nThe & operator applies a theme to all plots in a patchwork composite simultaneously:\n\n\nShow code\npatchwork &lt;- (p1 / p2) | p3\npatchwork & theme_economist()\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNote\n\n\n\nNotice the difference between + and & in patchwork:\n\n+ adds elements to the last plot only\n& applies the element to all plots in the composite"
+  },
+  {
+    "objectID": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#key-takeaways",
+    "href": "Hands-on_Ex/Hands-on_Ex02/Hands-on_Ex02_index.html#key-takeaways",
+    "title": "Hands-on Exercise 2: Beyond ggplot2 Fundamentals",
+    "section": "6. Key Takeaways",
+    "text": "6. Key Takeaways\nThis exercise let me learn how ggplot2 extensions can significantly elevate the quality of statistical graphics:\n\nggrepel solves the overlapping label problem automatically — always prefer geom_label_repel() over geom_label() when labelling individual data points\nggthemes provides ready-made publication themes that immediately give your plots a professional appearance\nhrbrthemes is particularly useful when typography and readability are a priority\npatchwork makes it easy to tell a multi-panel visual story with minimal code — use / to stack, | to place side by side, and & to apply themes globally\nComposite figures with plot_annotation(tag_levels = \"I\") are especially important in academic writing where subplots need to be referenced in text"
   }
 ]
