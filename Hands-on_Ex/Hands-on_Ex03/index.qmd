@@ -1,0 +1,548 @@
+---
+title: "Hands-on Exercise 3: Programming Interactive Data Visualisation with R"
+author: "Meng Tingyu"
+date: "`r Sys.Date()`"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    theme: cosmo
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+  freeze: true
+---
+
+# Learning Objectives & My Understanding {.unnumbered}
+
+The core idea of this exercise is to make "static charts come alive". In the previous two assignments, I learned how to create various statistical plots with `ggplot2`, but those charts were always "look-once-and-done" , readers could only passively accept the perspective I gave them. This time, I want to turn readers from passive observers into active explorers.
+
+Specifically, I want to achieve three goals through this exercise:
+
+1. **Understand the "grammar" of interactivity**: `ggiraph` abstracts interactive behaviors through three arguments, `tooltip` / `data_id` / `onclick`. This is actually a very elegant design philosophy.
+2. **Master two technical paths**: `ggiraph` extends `ggplot2`, while `plotly` is an independent interactive engine.
+3. **Learn to build Coordinated Multiple Views**: This is the most valuable part of interactive visualisation 
+
+---
+
+# Getting Started
+
+## Loading Required R Packages
+
+The code chunk below uses `pacman::p_load()` to check, install, and load all required packages in one go. I prefer this over the traditional `library()` approach because it saves the trouble of writing one line per package.
+
+```{r}
+pacman::p_load(ggiraph, plotly, 
+               patchwork, DT, tidyverse, crosstalk) 
+```
+
+**My understanding of each package:**
+
+- `ggiraph`: "Translates" ggplot charts into SVG, then injects interactive behaviors
+- `plotly`: An independent interactive plotting system based on plotly.js
+- `DT`: Renders R data frames as searchable, sortable HTML tables
+- `crosstalk`: Allows different htmlwidgets to "talk" to each other (linked filtering)
+- `patchwork`: A handy tool for combining multiple ggplots into one figure
+- `tidyverse`: The fundamental toolkit
+
+## Importing the Data
+
+```{r}
+exam_data <- read_csv("data/Exam_data.csv")
+```
+
+The dataset contains exam results of 322 students, including ID, class, gender, race, and scores in English, Maths, and Science.
+
+```{r}
+glimpse(exam_data)
+```
+
+**My observation**: The data is very "clean" with no missing values. `CLASS` is a categorical variable (string), and the three subject scores are numeric. This structure is well-suited for demonstrating interactive visualisation, there are continuous variables for scatter/histogram plots, and categorical variables for highlighting groups.
+
+---
+
+# ggiraph Interactive Methods
+
+The core idea of `ggiraph` can be summarised in one sentence: **add three "interactive features",`tooltip`, `data_id`, and `onclick`,to a geom, then use `girafe()` to package the entire chart into an interactive SVG**.
+
+Once you understand this, all the variations that follow are essentially just playing with these three features.
+
+## Basic Tooltip Usage
+
+The simplest interaction — display data point information when the mouse hovers over it:
+
+```{r}
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(
+    aes(tooltip = ID),          # Key: use ID as tooltip content
+    stackgroups = TRUE, 
+    binwidth = 1, 
+    method = "histodot") +
+  scale_y_continuous(NULL, 
+                     breaks = NULL)
+
+girafe(
+  ggobj = p,
+  width_svg = 6,
+  height_svg = 6 * 0.618    # Golden ratio — looks more pleasant
+)
+```
+
+**My thoughts**: Notice that we're using `geom_dotplot_interactive()` here, not the regular `geom_dotplot()`. `ggiraph` provides `_interactive` versions for almost all common geoms. The benefit of this design is — **almost zero learning cost for ggplot users**. You only need to change `geom_xxx` to `geom_xxx_interactive`.
+
+## Displaying More Information in the Tooltip
+
+Showing only the ID is too sparse. In real-world scenarios, we often want to see a "mini profile" of the data point on hover. The trick is to first concatenate a new field in the data:
+
+```{r}
+exam_data$tooltip <- c(paste0(     
+  "Student ID: ", exam_data$ID,         
+  "\nClass: ", exam_data$CLASS,
+  "\nMaths Score: ", exam_data$MATHS)) 
+
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(
+    aes(tooltip = exam_data$tooltip), 
+    stackgroups = TRUE,
+    binwidth = 1,
+    method = "histodot") +
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(
+  ggobj = p,
+  width_svg = 8,
+  height_svg = 8 * 0.618
+)
+```
+
+**My thoughts**: `\n` is used for line breaks, meaning the tooltip is essentially treated as plain text. At first I thought I'd need HTML tags, but it turns out a simple newline character is enough. For richer formatting (bold, colours), you need the CSS customisation in the next section.
+
+## Customising Tooltip Style
+
+The default tooltip looks rather "plain" black background, white text, no character. With CSS we can give it a complete makeover:
+
+```{r}
+tooltip_css <- "background-color: #fff8e1;
+                color: #333;
+                font-family: 'Helvetica Neue', sans-serif;
+                padding: 8px 12px;
+                border-radius: 6px;
+                border: 1px solid #ffc107;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);"
+
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(              
+    aes(tooltip = ID),                   
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") +               
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(                                  
+  ggobj = p,                             
+  width_svg = 6,                         
+  height_svg = 6 * 0.618,
+  options = list(    
+    opts_tooltip(    
+      css = tooltip_css))
+)                                        
+```
+
+**My thoughts**: Compared to the "black-and-white bold" style in the original example, I made some personal tweaks, light yellow background, rounded corners, drop shadow. This makes the tooltip feel more like a "modern web app" style. **Key takeaway**: `opts_tooltip()` accepts arbitrary CSS, which means with a little front-end knowledge, you can make the tooltip look however you want.
+
+## Displaying Statistics in the Tooltip
+
+A more advanced trick, instead of showing raw data, the tooltip displays **computed statistics**. For example, showing the mean Maths score and 95% confidence interval for each race:
+
+```{r}
+tooltip_stats <- function(y, ymax, accuracy = .01) {
+  mean_val <- scales::number(y, accuracy = accuracy)
+  sem <- scales::number(ymax - y, accuracy = accuracy)
+  paste0("Mean Maths Score: ", mean_val, "\nStandard Error: ±", sem)
+}
+
+gg_summary <- ggplot(data = exam_data, 
+                     aes(x = RACE)) +
+  stat_summary(
+    aes(y = MATHS, 
+        tooltip = after_stat(tooltip_stats(y, ymax))),  
+    fun.data = "mean_se", 
+    geom = GeomInteractiveCol,  
+    fill = "#5B9BD5",
+    width = 0.6
+  ) +
+  stat_summary(
+    aes(y = MATHS),
+    fun.data = mean_se,
+    geom = "errorbar", 
+    width = 0.2, 
+    linewidth = 0.4
+  ) +
+  labs(x = "Race", y = "Maths Score",
+       title = "Maths Score Comparison by Race (with Standard Error)") +
+  theme_minimal()
+
+girafe(ggobj = gg_summary,
+       width_svg = 8,
+       height_svg = 8 * 0.618)
+```
+
+**My thoughts**: This example made me realise that `after_stat()` is a really powerful tool, it allows us to reference computed values **after** ggplot has done the statistical calculation. This solves a core problem: the tooltip shows not raw data but values computed by the chart itself. If you wanted to achieve this manually, you'd have to `group_by` + `summarise` first, then plot much more cumbersome.
+
+## Hover Effect with `data_id`
+
+`tooltip` is "look where you point" information display, while `data_id` is for **linking and highlighting** , all elements sharing the same `data_id` get highlighted together on hover:
+
+```{r}
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(           
+    aes(data_id = CLASS),     # Students from the same class highlight together
+    stackgroups = TRUE,               
+    binwidth = 1,                        
+    method = "histodot") +               
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(                                  
+  ggobj = p,                             
+  width_svg = 6,                         
+  height_svg = 6 * 0.618                      
+)                                        
+```
+
+**My thoughts**: This is the essence of `data_id`, **it extends a single data point's "individual identity" into a "group identity"**. When analysing class-level performance, hovering over any student instantly reveals "where the rest of their classmates fall on the score range" far more intuitive than a static plot.
+
+## Styling the Hover Effect
+
+The default highlight is orange (`fill: orange`). Through `opts_hover()` and `opts_hover_inv()`, we can fully control both the highlighted and "dimmed" styles:
+
+```{r}
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(              
+    aes(data_id = CLASS),              
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") +               
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(                                  
+  ggobj = p,                             
+  width_svg = 6,                         
+  height_svg = 6 * 0.618,
+  options = list(                        
+    opts_hover(css = "fill: #C00000; stroke: black; stroke-width: 1.5px;"),  
+    opts_hover_inv(css = "opacity: 0.15;")   # Non-selected elements fade out
+  )                                        
+)                                        
+```
+
+**My thoughts**: `opts_hover_inv()` is what I think is the most clever part, it defines "what non-highlighted elements should look like". By dropping opacity to 0.15, unselected points almost "disappear", and the visual impact of the highlighted group is amplified. This is the classic "focus + context" design, emphasising the focal point while preserving context.
+
+## Combining Tooltip and Hover
+
+The two interactions can absolutely coexist. A common pairing: `data_id` for group highlighting, `tooltip` for showing specific content:
+
+```{r}
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(              
+    aes(tooltip = CLASS, 
+        data_id = CLASS),              
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") +               
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(                                  
+  ggobj = p,                             
+  width_svg = 6,                         
+  height_svg = 6 * 0.618,
+  options = list(                        
+    opts_hover(css = "fill: #202020;"),  
+    opts_hover_inv(css = "opacity: 0.2;") 
+  )                                        
+)                                        
+```
+
+**My thoughts**: When tooltip and data_id share the same variable (CLASS), the experience feels most natural , "see all students in this class, and know which class it is", that's intuitive double-feedback.
+
+## Click-to-Navigate with `onclick`
+
+`onclick` turns data points into "hyperlinks" , clicking jumps to a related page:
+
+```{r}
+exam_data$onclick <- sprintf(
+  "window.open(\"%s%s\")",
+  "https://www.moe.gov.sg/schoolfinder?journey=Primary%20school",
+  as.character(exam_data$ID))
+
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS)) +
+  geom_dotplot_interactive(              
+    aes(onclick = onclick),              
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") +               
+  scale_y_continuous(NULL,               
+                     breaks = NULL)
+
+girafe(                                  
+  ggobj = p,                             
+  width_svg = 6,                         
+  height_svg = 6 * 0.618)                                        
+```
+
+**My thoughts**: `onclick` accepts arbitrary JavaScript code as a string, so theoretically you can do far more than just "open a new window", trigger pop-ups, modify other page elements, submit forms, etc. However, there's a **pitfall** here: if the string concatenated for the onclick field contains special characters (quotes, backslashes), it can easily cause JS errors. In production, it's best to do a proper escape.
+
+## Coordinated Multiple Views
+
+This is one of `ggiraph`'s most valuable features, two charts linked through a shared `data_id`:
+
+```{r}
+p1 <- ggplot(data = exam_data, 
+             aes(x = MATHS)) +
+  geom_dotplot_interactive(              
+    aes(data_id = ID),              
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") +  
+  coord_cartesian(xlim = c(0, 100)) + 
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Maths Score Distribution")
+
+p2 <- ggplot(data = exam_data, 
+             aes(x = ENGLISH)) +
+  geom_dotplot_interactive(              
+    aes(data_id = ID),              
+    stackgroups = TRUE,                  
+    binwidth = 1,                        
+    method = "histodot") + 
+  coord_cartesian(xlim = c(0, 100)) + 
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "English Score Distribution")
+
+girafe(code = print(p1 + p2),    # Use patchwork's + to combine the two plots
+       width_svg = 8,
+       height_svg = 4,
+       options = list(
+         opts_hover(css = "fill: #C00000;"),
+         opts_hover_inv(css = "opacity: 0.2;")
+       )
+) 
+```
+
+**My core reflection**: This is the technique I find most "useful" in this entire assignment.
+
+- Looking at a single histogram, I can only know "the distribution of Maths scores"
+- But with linking added, **hovering on the high-Maths region instantly reveals where these students sit on the English chart**  are they equally strong? Or are they unbalanced?
+- This kind of "cross-variable exploration" is something static charts simply cannot do
+
+The key to making it work: **both charts must use the same `data_id` (here, ID)**, otherwise ggiraph doesn't know how to map between them.
+
+---
+
+# plotly Interactive Methods
+
+`plotly` is the other technical path. It has two usage patterns:
+
+1. `plot_ly()`: Use plotly's syntax to plot directly
+2. `ggplotly()`: "One-click conversion" of an existing ggplot object into an interactive chart
+
+I'll try both and compare the experience.
+
+## Creating a Scatter Plot with `plot_ly()`
+
+```{r}
+plot_ly(data = exam_data, 
+        x = ~MATHS,
+        y = ~ENGLISH)
+```
+
+**My thoughts**: The `~MATHS` syntax confused me at first, why the `~`? Then I understood: it's R's formula notation, telling plotly "this is a column name in the data, not a regular variable". Once you get used to it, it's quite concise.
+
+## Adding Colour Encoding
+
+```{r}
+plot_ly(data = exam_data, 
+        x = ~MATHS,
+        y = ~ENGLISH,
+        color = ~RACE,
+        colors = "Set1")    # Use ColorBrewer's Set1 palette
+```
+
+**My thoughts**: There's a "hidden feature" of plotly here, **clicking on legend items toggles the visibility of corresponding categories**. This is something static ggplot2 can never do. During data exploration, the ability to "filter out a category with one click and observe what's left" is incredibly practical.
+
+## Converting a ggplot with `ggplotly()`
+
+```{r}
+p <- ggplot(data = exam_data, 
+            aes(x = MATHS, y = ENGLISH)) +
+  geom_point(aes(color = RACE), size = 2, alpha = 0.7) +
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100)) +
+  labs(title = "Maths vs English Scores",
+       x = "Maths", y = "English") +
+  theme_minimal()
+
+ggplotly(p)
+```
+
+**My thoughts and comparison**:
+
+- `plot_ly()`: Independent syntax, requires learning a new system, but offers the best support for plotly's native features
+- `ggplotly()`: Almost zero learning cost (sticks with ggplot syntax), but some complex ggplot features get "lost in translation"
+
+Personally, I **lean more towards `ggplotly()`** because I'm already used to ggplot syntax, and in most cases "basic interactivity" is enough; we don't need plotly's full set of advanced features.
+
+## Coordinated Multiple Views with plotly
+
+Linking with plotly takes three steps: use `highlight_key()` to create shared data → plot two charts → combine them with `subplot()`.
+
+```{r}
+shared_data <- highlight_key(exam_data)
+
+p1 <- ggplot(shared_data, 
+             aes(x = MATHS, y = ENGLISH)) +
+  geom_point(size = 2, alpha = 0.6, color = "#5B9BD5") +
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100)) +
+  labs(title = "Maths vs English") +
+  theme_minimal()
+
+p2 <- ggplot(shared_data, 
+             aes(x = MATHS, y = SCIENCE)) +
+  geom_point(size = 2, alpha = 0.6, color = "#ED7D31") +
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100)) +
+  labs(title = "Maths vs Science") +
+  theme_minimal()
+
+subplot(ggplotly(p1), 
+        ggplotly(p2), 
+        nrows = 1) %>%
+  highlight(on = "plotly_selected",     # Triggered by box-select
+            off = "plotly_doubleclick") # Cleared by double-click
+```
+
+**My thoughts**: plotly's linking has one killer feature beyond ggiraph **box select / lasso select**. You can "draw a region" and the points inside get highlighted in the other chart. This is especially useful for exploring "doubly-high / doubly-low / unbalanced" students.
+
+`highlight_key()` is essentially `crosstalk::SharedData`, it creates a "shared identity" object that lets multiple widgets know "this is the same batch of data".
+
+---
+
+# Cross-Component Linking with crosstalk
+
+`crosstalk` is where things get truly powerful, it lets **completely different types** of widgets link with each other (chart ↔ table, chart ↔ filter, etc.).
+
+## Interactive Tables with DT
+
+First let's see what `DT` produces on its own:
+
+```{r}
+DT::datatable(
+  exam_data %>% select(-tooltip, -onclick),  # Drop the helper columns we added earlier
+  class = "compact",
+  options = list(
+    pageLength = 5,
+    scrollX = TRUE
+  ),
+  caption = "Student Exam Results"
+)
+```
+
+**My thoughts**: The search, sort, and pagination features `DT` provides are completely "out of the box", backed by the JavaScript DataTables library. Functionality that would normally require lots of front-end code is achieved in R with a single line. This is the magic of the htmlwidgets ecosystem.
+
+## Linking a Scatter Plot with a Table
+
+Finally, a comprehensive example, linking a scatter plot and a table via crosstalk:
+
+```{r}
+shared_exam <- highlight_key(exam_data %>% select(-tooltip, -onclick))
+
+scatter <- ggplot(shared_exam, 
+                  aes(x = MATHS, y = ENGLISH, color = RACE)) +
+  geom_point(size = 2.5, alpha = 0.7) +
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100)) +
+  theme_minimal() +
+  labs(title = "Box-select students on the scatter plot — the table below highlights in sync")
+
+scatter_plotly <- ggplotly(scatter) %>%
+  highlight(on = "plotly_selected", 
+            off = "plotly_doubleclick")
+
+table <- DT::datatable(shared_exam,
+                       options = list(pageLength = 5))
+
+# Use crosstalk::bscols to stack them vertically
+crosstalk::bscols(
+  widths = c(12, 12),
+  scatter_plotly,
+  table
+)
+```
+
+**My core reflection**: This example made me truly understand the ultimate form of "interactive data visualisation" 
+
+> **Charts are no longer the presentation of conclusions, but the entry point of exploration.**
+
+The reader can "circle a region of interesting points on the chart → instantly see their detailed information in the table". This kind of usage transforms the reader's role from "receiver" into "researcher".
+
+---
+
+# Reflections & Summary
+
+## Comparing the Three Approaches
+
+After completing this assignment, I have a much clearer view of these three tools:
+
+| Dimension | ggiraph | plotly | crosstalk |
+|------|---------|--------|-----------|
+| **Learning curve** | Low (extends ggplot) | Medium (`plot_ly` needs new syntax, `ggplotly` is easy) | Medium (need to grasp the SharedData concept) |
+| **Interaction richness** | Medium (hover/click/tooltip) | High (includes zoom, box-select, pan, legend toggle) | Depends on paired widget |
+| **Style control** | Very strong (any CSS) | Medium (plotly's own theming) | Depends on paired widget |
+| **Linking capability** | Multiple charts within one girafe | Multiple charts sharing a highlight_key | Across any htmlwidget |
+| **Static export** | SVG (vector, high quality) | PNG (requires webshot) | Not applicable |
+
+## The Core Idea I Took Away
+
+**Interactivity isn't "decoration" — it's an "expansion of information density".** A static chart can only present information from one fixed perspective, while an interactive chart lets readers dynamically switch perspectives based on their interests, which essentially turns "one chart" into "infinitely many charts".
+
+But it's also important to recognise that **more interactivity isn't always better**:
+
+- If a chart's core conclusion is already crystal clear (e.g. "this metric has been declining year-on-year for the past decade"), adding interactivity actually distracts
+- The scenarios truly suited for interactivity are: **multivariate exploration, individual-level lookups, and analyses that need "filter then re-observe"**
+
+## Pitfalls I Encountered
+
+1. **`girafe()` measures dimensions in inches**, not pixels. I initially set `width_svg = 600` and the chart blew up the page.
+2. **`ggplotly()` cannot perfectly convert all ggplot elements**. For instance, `facet_wrap` titles sometimes get distorted. For complex ggplot charts, finalise the static version first, then convert.
+3. **`crosstalk::bscols` requires Bootstrap dependencies**, first run may prompt package installation.
+4. **When concatenating JS strings for the `onclick` field**, `sprintf()` is safer than `paste0()` because it gives more precise control over quote escaping.
+
+## Directions I Want to Explore
+
+This assignment has sparked a strong interest in interactive visualisation. Next, I want to try:
+
+- **Combining with Shiny**: Embed these charts in a Shiny app so users can dynamically change chart contents through controls (dropdowns, sliders)
+- **More complex crosstalk applications**: e.g. a map + a time-series chart + a table, all three fully linked
+- **`gganimate`**: Animate the "time dimension" to create dynamic, evolving visualisations
+- **`echarts4r`**: Another powerful interactive visualisation library, said to perform very well in dashboard scenarios
+
+## A One-Sentence Summary
+
+> This exercise made me realise, **ggplot syntax is just the starting point. Making visualisations "explorable" is what truly serves the reader.**
+
+---
+
