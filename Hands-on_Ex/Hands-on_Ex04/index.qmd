@@ -1,0 +1,660 @@
+---
+title: "Hands-on Exercise 4: Seeing Distributions, Quantifying Uncertainty, Embedding Statistics, and Comparing Fairly"
+author: "Meng Tingyu"
+date: "`r Sys.Date()`"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    theme: cosmo
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+  freeze: true
+---
+
+# Before We Start {.unnumbered}
+
+This exercise covers four seemingly independent topics: visualising distributions, visualising uncertainty, visual statistical analysis, and funnel plots for fair comparison. At first I thought they had nothing to do with each other, but after working through them I realised they form a complete progression in **how seriously we take a chart**.
+
+I reorganised the order based on my own understanding:
+
+Step one, use ridgeline and raincloud plots to see the **shape** of the data clearly. This is the starting point of any analysis.
+
+Step two, recognise that the sample mean is not the true mean. So we use error bars and ggdist to draw out **how confident we actually are**.
+
+Step three, take it further by embedding the results of statistical tests (p values, effect sizes, Bayes factors) directly into the chart, so a single image performs both exploration and inference.
+
+Step four, apply everything we have learned to a real problem: when sample sizes vary widely across entities (hospitals, schools, regions), how do we make a fair side-by-side comparison? That is what funnel plots are for.
+
+By the end I realised these four chapters are not really four tools. They are a complete chain of thinking: from looking, to inferring, to comparing.
+
+# Setup
+
+## Loading the Required Packages
+
+Quite a few packages this time. I use `pacman::p_load()` to handle them all at once, and write the role of each one as a comment for future reference:
+
+```{r}
+pacman::p_load(
+  ggdist,        # uncertainty + distribution viz (half-eye, point-interval)
+  ggridges,      # ridgeline / joyplots
+  ggstatsplot,   # one-shot statistical tests + visualisation
+  ggthemes,      # extra themes like economist
+  colorspace,    # lighten / darken color helpers
+  FunnelPlotR,   # funnel plot package
+  plotly,        # interactive plots
+  knitr,         # table rendering
+  tidyverse      # data wrangling foundation
+)
+```
+
+## Importing the Data
+
+This exercise uses two datasets. The first three parts use the student exam data `Exam_data.csv`, while the last part uses the DKI Jakarta COVID-19 data `COVID-19_DKI_Jakarta.csv`.
+
+```{r}
+exam <- read_csv("data/Exam_data.csv")
+covid19 <- read_csv("data/COVID-19_DKI_Jakarta.csv") %>%
+  mutate_if(is.character, as.factor)
+```
+
+A quick look at both datasets:
+
+```{r}
+glimpse(exam)
+```
+
+```{r}
+glimpse(covid19)
+```
+
+My initial observations: the exam data is a small dataset of 322 rows by 7 columns, and the grouping variables (CLASS, RACE, GENDER) are perfect for comparing distributions across groups. The COVID data has 267 sub-districts (kelurahan) with cumulative positive cases and deaths. This is a textbook case of "comparing rates across entities with very different sample sizes", which is exactly what funnel plots solve.
+
+# Part 1: Seeing the Shape of Data with Ridgeline and Raincloud Plots
+
+The traditional boxplot has one fatal weakness. It only shows the median and quartiles, which means **you cannot tell whether the distribution is unimodal or bimodal, skewed left or right**. If a group of data has two clear peaks (say top students and struggling students), the boxplot looks identical to a single peak distribution. That is seriously misleading.
+
+## Ridgeline Plot: Best Choice When You Have Many Groups
+
+The essence of a ridgeline plot is **stacking multiple distributions vertically with slight overlap**, so you can compare many groups in a compact space.
+
+Only consider it when you have **5 or more groups**. With fewer groups, faceted density plots work better. Our CLASS variable has 9 classes, which is in the sweet spot.
+
+### Basic Ridgeline
+
+```{r}
+ggplot(exam, 
+       aes(x = ENGLISH, 
+           y = CLASS)) +
+  geom_density_ridges(
+    scale = 3,
+    rel_min_height = 0.01,
+    bandwidth = 3.4,
+    fill = lighten("#7097BB", .3),
+    color = "white"
+  ) +
+  scale_x_continuous(
+    name = "English Grades",
+    expand = c(0, 0)
+  ) +
+  scale_y_discrete(name = NULL, 
+                   expand = expansion(add = c(0.2, 2.6))) +
+  theme_ridges()
+```
+
+How I think about the key parameters:
+
+`scale = 3` controls the height of each ridge. The larger the value, the chunkier the ridge and the more they overlap. I tried 1 and 5 and found 3 hits the sweet spot between "I can still see the shape of each ridge" and "the whole thing looks compact".
+
+`rel_min_height = 0.01` cuts off the very low density tails. Without it you get long thin tails that are barely visible but still take up space.
+
+`bandwidth = 3.4` is the kernel density bandwidth. A small bandwidth gives a jagged curve, and a large one over-smooths and hides real structure.
+
+### Mapping Probability Information onto Color
+
+Next level move: let the color carry information. The version below uses the empirical cumulative distribution function (ECDF) to compute the **tail probability** at each x position. The closer to the extremes, the darker the color.
+
+```{r}
+ggplot(exam,
+       aes(x = ENGLISH, 
+           y = CLASS, 
+           fill = 0.5 - abs(0.5 - after_stat(ecdf)))) +
+  stat_density_ridges(geom = "density_ridges_gradient", 
+                      calc_ecdf = TRUE) +
+  scale_fill_viridis_c(name = "Tail probability",
+                       direction = -1) +
+  theme_ridges()
+```
+
+A regular ridgeline only tells me **what the distribution looks like for this class**. The tail probability version tells me **where any individual student sits within their own class**. The dark areas are the extreme values (very high or very low) for that class.
+
+Note that `calc_ecdf = TRUE` must be turned on, otherwise `after_stat(ecdf)` has no value to access. I forgot this the first time and spent a while debugging the error.
+
+### Coloring by Quartile
+
+Another approach is to slice the distribution into quartiles and color each slice differently:
+
+```{r}
+ggplot(exam,
+       aes(x = ENGLISH, 
+           y = CLASS, 
+           fill = factor(after_stat(quantile)))) +
+  stat_density_ridges(
+    geom = "density_ridges_gradient",
+    calc_ecdf = TRUE, 
+    quantiles = 4,
+    quantile_lines = TRUE) +
+  scale_fill_viridis_d(name = "Quartiles") +
+  theme_ridges()
+```
+
+The biggest advantage of this version is that **the median line is immediately visible** (the boundary between the two middle slices). For "quickly comparing the central location across many groups", this version beats the ECDF one.
+
+## Raincloud Plot: Combining Boxplot, Density, and Dotplot in One
+
+Raincloud is named that way because it has three layers: the "cloud" on top (a half density), the "rain" in the middle (a boxplot), and the "rain drops" at the bottom (a dotplot). **Three perspectives at once**, each compensating for the others' blind spots.
+
+### Layer One: Half-Eye
+
+```{r}
+ggplot(exam, 
+       aes(x = RACE, 
+           y = ENGLISH)) +
+  stat_halfeye(adjust = 0.5,
+               justification = -0.2,
+               .width = 0,
+               point_colour = NA)
+```
+
+`justification = -0.2` shifts the half density slightly to the right, leaving room for the boxplot we will add next. `.width = 0` and `point_colour = NA` turn off the default "point + interval" decoration that ggdist adds by default, because at this layer I only want the density shape.
+
+### Layer Two: Boxplot
+
+```{r}
+ggplot(exam, 
+       aes(x = RACE, 
+           y = ENGLISH)) +
+  stat_halfeye(adjust = 0.5,
+               justification = -0.2,
+               .width = 0,
+               point_colour = NA) +
+  geom_boxplot(width = .20,
+               outlier.shape = NA)
+```
+
+`width = .20` squeezes the boxplot into a thin "needle" so it does not steal visual focus from the density. `outlier.shape = NA` hides the outliers, because the upcoming dotplot will draw all individual points anyway, so duplicate outlier marks are unnecessary.
+
+### Layer Three: Dotplot
+
+```{r}
+ggplot(exam, 
+       aes(x = RACE, 
+           y = ENGLISH)) +
+  stat_halfeye(adjust = 0.5,
+               justification = -0.2,
+               .width = 0,
+               point_colour = NA) +
+  geom_boxplot(width = .20,
+               outlier.shape = NA) +
+  stat_dots(side = "left", 
+            justification = 1.2, 
+            binwidth = NA,
+            dotsize = 2)
+```
+
+`side = "left"` puts the dots on the left side, mirroring the density on the right. `justification = 1.2` pushes them further left to avoid overlapping with the boxplot.
+
+### Final Polished Version
+
+Flip the coordinates and apply a clean theme to get the classic horizontal raincloud:
+
+```{r}
+ggplot(exam, 
+       aes(x = RACE, 
+           y = ENGLISH)) +
+  stat_halfeye(adjust = 0.5,
+               justification = -0.2,
+               .width = 0,
+               point_colour = NA) +
+  geom_boxplot(width = .20,
+               outlier.shape = NA) +
+  stat_dots(side = "left", 
+            justification = 1.2, 
+            binwidth = NA,
+            dotsize = 1.5) +
+  coord_flip() +
+  theme_economist()
+```
+
+## Wrap-up of Part 1
+
+Ridgeline and raincloud look complex, but they both solve the same underlying problem: **boxplots have too low information density**.
+
+Ridgeline is great for "quick comparison across many groups", and raincloud is great for "deep dive into a single group". For my future projects, I will reach for ridgeline when comparing 5 or more groups, and raincloud when looking at 2 to 4 groups in detail.
+
+# Part 2: From Point Estimates to Interval Estimates, Visualising Our Uncertainty
+
+Part 1 let us see the shape of the data, but it stayed at the level of "this is the sample". The reality is that no matter how large our sample is, the sample mean is only an estimate of the true mean. This part is about answering: **how do we visualise that uncertainty**?
+
+## Manually Drawing Error Bars with ggplot2
+
+The classic approach. First use dplyr to compute the mean, standard deviation, and standard error for each group:
+
+```{r}
+my_sum <- exam %>%
+  group_by(RACE) %>%
+  summarise(
+    n = n(),
+    mean = mean(MATHS),
+    sd = sd(MATHS)
+  ) %>%
+  mutate(se = sd / sqrt(n - 1))
+
+knitr::kable(my_sum, format = 'html')
+```
+
+How I think about these statistics: standard deviation (sd) describes **how spread out the data itself is**. Standard error (se) describes **how uncertain we are about the mean estimate**. These two are often confused. The formula for se is sd divided by sqrt(n), which means the larger the sample, the more precise our estimate of the mean, and the smaller the se.
+
+### Standard Error Bars
+
+```{r}
+ggplot(my_sum) +
+  geom_errorbar(
+    aes(x = RACE, 
+        ymin = mean - se, 
+        ymax = mean + se), 
+    width = 0.2, 
+    colour = "black", 
+    alpha = 0.9, 
+    linewidth = 0.5) +
+  geom_point(aes(x = RACE, 
+                 y = mean), 
+             stat = "identity", 
+             color = "red",
+             size = 1.5,
+             alpha = 1) +
+  ggtitle("Standard Error of Mean Maths Score by Race")
+```
+
+### 95% Confidence Intervals
+
+Replace ±1 SE with ±1.96 SE to get the 95% confidence interval. I also added `reorder()` to sort by mean, which makes the chart easier to read:
+
+```{r}
+ggplot(my_sum) +
+  geom_errorbar(
+    aes(x = reorder(RACE, -mean), 
+        ymin = mean - 1.96*se, 
+        ymax = mean + 1.96*se), 
+    width = 0.2, 
+    colour = "black", 
+    alpha = 0.9, 
+    linewidth = 0.5) +
+  geom_point(aes(x = RACE, 
+                 y = mean), 
+             stat = "identity", 
+             color = "red",
+             size = 1.5,
+             alpha = 1) +
+  labs(x = "Race",
+       y = "Mean Maths Score",
+       title = "95% Confidence Interval of Mean Maths Score by Race")
+```
+
+The trick to reading this chart: **if two groups' confidence intervals do not overlap, their means are almost certainly significantly different**; if they overlap heavily, the difference is likely not significant. This is a much smarter visual judgement than just eyeballing bar heights.
+
+## Doing It Elegantly with ggdist
+
+The `ggdist` package offers a much cleaner syntax. No need to compute summaries manually.
+
+### stat_pointinterval: Auto-Compute Intervals
+
+```{r}
+exam %>%
+  ggplot(aes(x = RACE, y = MATHS)) +
+  stat_pointinterval() +
+  labs(
+    title = "Multiple Confidence Intervals of Mean Maths Score",
+    subtitle = "Default shows 66% and 95% intervals")
+```
+
+ggdist by default draws two layers of lines with different thicknesses, representing the 66% and 95% intervals. This **multiple intervals in one chart** design carries more information than a single interval.
+
+### Customising the Intervals
+
+If we only want the 95% interval and switch the point to median:
+
+```{r}
+exam %>%
+  ggplot(aes(x = RACE, y = MATHS)) +
+  stat_pointinterval(.width = 0.95,
+                     .point = median,
+                     .interval = qi) +
+  labs(
+    title = "95% Interval of Median Maths Score",
+    subtitle = "Median is more robust to outliers than mean")
+```
+
+I noticed that ggdist treats mean and median as first-class citizens equally. **When the data is skewed or has outliers, median is more reliable than mean**. Being able to swap so easily is a big advantage of ggdist.
+
+### Showing Multiple Confidence Levels at Once
+
+```{r}
+exam %>%
+  ggplot(aes(x = RACE, y = MATHS)) +
+  stat_pointinterval(
+    .width = c(0.95, 0.99),
+    show.legend = FALSE) +
+  labs(
+    title = "Showing 95% and 99% Intervals Simultaneously",
+    subtitle = "Outer thick line = 95%, inner thin line = 99%")
+```
+
+### Gradient Interval Plot (Prettier and More Honest)
+
+```{r}
+exam %>%
+  ggplot(aes(x = RACE, y = MATHS)) +
+  stat_gradientinterval(   
+    fill = "skyblue",      
+    show.legend = TRUE     
+  ) +                        
+  labs(
+    title = "Gradient-Style Uncertainty Visualisation",
+    subtitle = "Darker areas indicate higher probability of the estimate")
+```
+
+Why I think this gradient design is great: **it removes the binary "inside vs outside the interval" split**. Traditional error bars make people feel "every value inside the interval is equally likely", but the truth is that values closer to the center are more likely. The gradient version is more honest about that.
+
+## Wrap-up of Part 2
+
+Core idea of uncertainty visualisation: **every point estimate should come with its uncertainty information**. Otherwise we are deceiving the reader.
+
+Manual error bars give precise control over every detail and are great for publication-ready charts. ggdist's one-liner is better for exploratory analysis. I will keep both tools in my toolkit and pick based on the situation.
+
+# Part 3: Embedding Statistical Tests Directly into Charts
+
+If the first two parts were about "making charts carry more information", then `ggstatsplot` pushes that idea to the extreme: **let one chart contain visualisation, descriptive statistics, inferential statistics, effect sizes, Bayes factors, and even comply with APA reporting guidelines**.
+
+## One-Sample Test: gghistostats
+
+Suppose we want to test whether the mean English score across all students equals 60. The traditional workflow is to run a t-test, then draw a histogram, then verbally explain the result. `gghistostats` collapses all three into one:
+
+```{r}
+set.seed(1234)
+
+gghistostats(
+  data = exam,
+  x = ENGLISH,
+  type = "bayes",
+  test.value = 60,
+  xlab = "English Scores"
+)
+```
+
+The information density in the title area is enormous. What appears here is BF₁₀, the Bayes factor. It tells us **the strength of evidence in favor of the alternative hypothesis** relative to the strength of evidence in favor of the null.
+
+My quick reference for interpreting Bayes factors (based on Jeffreys 1961, revised by Lee & Wagenmakers 2013):
+
+| BF₁₀ Range | Interpretation |
+|----------|------|
+| > 100 | Extreme evidence for H₁ |
+| 30 to 100 | Very strong evidence for H₁ |
+| 10 to 30 | Strong evidence for H₁ |
+| 3 to 10 | Moderate evidence for H₁ |
+| 1 to 3 | Anecdotal evidence for H₁ |
+| 1 | No evidence for either |
+| 1/3 to 1 | Anecdotal evidence for H₀ |
+| 1/10 to 1/3 | Moderate evidence for H₀ |
+
+The advantage of Bayes factors over p values: **they are symmetric**. They can quantify both "evidence for H₀" and "evidence for H₁", whereas p values can only reject H₀ but cannot "accept H₀".
+
+## Two-Sample Mean Test: ggbetweenstats
+
+Comparing maths scores between male and female students:
+
+```{r}
+ggbetweenstats(
+  data = exam,
+  x = GENDER, 
+  y = MATHS,
+  type = "np",
+  messages = FALSE
+)
+```
+
+`type = "np"` means using a non-parametric test (Mann Whitney U). When the data does not satisfy normality assumptions, non-parametric tests are safer.
+
+## One-Way ANOVA: Still ggbetweenstats
+
+Switch the grouping variable from binary to multi-class (RACE), and add pairwise comparisons:
+
+```{r}
+ggbetweenstats(
+  data = exam,
+  x = RACE, 
+  y = ENGLISH,
+  type = "p",
+  mean.ci = TRUE, 
+  pairwise.comparisons = TRUE, 
+  pairwise.display = "s",
+  p.adjust.method = "fdr",
+  messages = FALSE
+)
+```
+
+Parameter notes (these are things I had to dig into the docs to figure out):
+
+`pairwise.display = "s"` only shows pairwise comparisons that are statistically significant, avoiding a chart cluttered with "ns" (not significant) labels.
+
+`p.adjust.method = "fdr"` uses the False Discovery Rate method to correct p values for multiple comparisons. Not correcting for multiple comparisons inflates the false positive rate dramatically. FDR is one of the most popular correction methods today.
+
+## Significance Test of Correlation: ggscatterstats
+
+```{r}
+ggscatterstats(
+  data = exam,
+  x = MATHS,
+  y = ENGLISH,
+  marginal = FALSE,
+)
+```
+
+The chart simultaneously shows: scatter points, regression line, Pearson correlation r, p value, 95% confidence interval, and Bayes factor. **One chart equals a mini correlation analysis paper**.
+
+## Contingency Table Test of Association: ggbarstats
+
+First slice maths scores into 4 bins (poor, fair, good, excellent):
+
+```{r}
+exam1 <- exam %>% 
+  mutate(MATHS_bins = 
+           cut(MATHS, 
+               breaks = c(0, 60, 75, 85, 100)))
+```
+
+Then test whether "maths score bin" is independent of "gender":
+
+```{r}
+ggbarstats(exam1, 
+           x = MATHS_bins, 
+           y = GENDER)
+```
+
+This is a chi-square test of independence visualised. If the p value is significant, it means male and female students are distributed differently across score bins.
+
+## Wrap-up of Part 3
+
+The real value of `ggstatsplot` is not "pretty charts". It is that it **forces you to surface all the statistical information**.
+
+A mistake I used to make in reports: I would paste a boxplot and write "there is a difference between male and female students", but the reader had no way to judge whether the difference was significant or how large the effect was. After using ggstatsplot, this kind of **visual claim without statistical backing** rarely shows up in my work anymore.
+
+# Part 4: Funnel Plots, the Art of Fair Comparison
+
+The first three parts were all about "how to see one set of data clearly". But in reality we often face **side-by-side comparisons across multiple entities**: death rates across hospitals, college admission rates across schools, crime rates across regions. The biggest pitfall in such comparisons is **vastly different sample sizes**.
+
+For example, Hospital A performed 10 surgeries with 1 death, while Hospital B performed 1000 surgeries with 50 deaths. A's death rate is 10%, B's is 5%. But can we say A is worse? Obviously not, because A's sample is so small that the 10% could be pure bad luck.
+
+Funnel plots solve exactly this problem: **they take sample size into account** and provide a "reasonable range" that adjusts dynamically with sample size. Only entities falling outside the range are truly anomalous.
+
+## Quick Generation with FunnelPlotR
+
+```{r}
+funnel_plot(
+  .data = covid19,
+  numerator = Positive,
+  denominator = Death,
+  group = `Sub-district`
+)
+```
+
+Note that `group` here does not mean "grouping variable". It means **the unit each point on the funnel represents**. In this case, each point is a sub-district.
+
+## Switching to "Proportion" Mode and Zooming
+
+`data_type = "PR"` indicates we want to analyse proportions (fatality rate = Death / Positive). `xrange` and `yrange` work like Excel's "zoom" function, letting us focus on the area of interest:
+
+```{r}
+funnel_plot(
+  .data = covid19,
+  numerator = Death,
+  denominator = Positive,
+  group = `Sub-district`,
+  data_type = "PR",
+  xrange = c(0, 6500),
+  yrange = c(0, 0.05)
+)
+```
+
+## Adding a Professional Title and Axis Labels
+
+```{r}
+funnel_plot(
+  .data = covid19,
+  numerator = Death,
+  denominator = Positive,
+  group = `Sub-district`,
+  data_type = "PR",   
+  xrange = c(0, 6500),  
+  yrange = c(0, 0.05),
+  label = NA,
+  title = "Cumulative COVID-19 Fatality Rate by Cumulative Total Number of COVID-19 Positive Cases",
+  x_label = "Cumulative COVID-19 Positive Cases",
+  y_label = "Cumulative Fatality Rate"
+)
+```
+
+`label = NA` turns off the default outlier labels. Personally I find that on dense charts the labels overlap into a mess, so turning them off makes things cleaner.
+
+## Building One from Scratch with ggplot2
+
+The best way to understand the principle of a funnel plot is to build one by hand. Step one, compute the rate and standard error for each point:
+
+```{r}
+df <- covid19 %>%
+  mutate(rate = Death / Positive) %>%
+  mutate(rate.se = sqrt((rate * (1 - rate)) / Positive)) %>%
+  filter(rate > 0)
+```
+
+`rate.se` uses the binomial standard error formula sqrt(p(1-p)/n). This formula is crucial. **It explains why the funnel narrows as n grows**: larger n means larger denominator, smaller se, and a tighter "reasonable range".
+
+Step two, compute the overall weighted average rate across all entities, used as the funnel's centerline:
+
+```{r}
+fit.mean <- weighted.mean(df$rate, 1 / df$rate.se^2)
+fit.mean
+```
+
+Notice the weight is `1/se^2`, which is **inverse-variance weighting**. This is the standard practice in meta-analysis. The idea is "the more precise the estimate, the higher its weight".
+
+Step three, generate the upper and lower bound curves for 95% and 99.9%:
+
+```{r}
+number.seq <- seq(1, max(df$Positive), 1)
+number.ll95 <- fit.mean - 1.96 * sqrt((fit.mean*(1-fit.mean)) / number.seq) 
+number.ul95 <- fit.mean + 1.96 * sqrt((fit.mean*(1-fit.mean)) / number.seq) 
+number.ll999 <- fit.mean - 3.29 * sqrt((fit.mean*(1-fit.mean)) / number.seq) 
+number.ul999 <- fit.mean + 3.29 * sqrt((fit.mean*(1-fit.mean)) / number.seq) 
+
+dfCI <- data.frame(number.ll95, number.ul95, number.ll999, 
+                   number.ul999, number.seq, fit.mean)
+```
+
+1.96 corresponds to two-sided 95%, and 3.29 corresponds to two-sided 99.8% (also known as the 3 sigma rule).
+
+Step four, draw the chart:
+
+```{r}
+p <- ggplot(df, aes(x = Positive, y = rate)) +
+  geom_point(aes(label = `Sub-district`), 
+             alpha = 0.4) +
+  geom_line(data = dfCI, 
+            aes(x = number.seq, y = number.ll95), 
+            size = 0.4, colour = "grey40", linetype = "dashed") +
+  geom_line(data = dfCI, 
+            aes(x = number.seq, y = number.ul95), 
+            size = 0.4, colour = "grey40", linetype = "dashed") +
+  geom_line(data = dfCI, 
+            aes(x = number.seq, y = number.ll999), 
+            size = 0.4, colour = "grey40") +
+  geom_line(data = dfCI, 
+            aes(x = number.seq, y = number.ul999), 
+            size = 0.4, colour = "grey40") +
+  geom_hline(data = dfCI, 
+             aes(yintercept = fit.mean), 
+             size = 0.4, colour = "grey40") +
+  coord_cartesian(ylim = c(0, 0.05)) +
+  annotate("text", x = 1, y = -0.13, label = "95%", size = 3, colour = "grey40") + 
+  annotate("text", x = 4.5, y = -0.18, label = "99%", size = 3, colour = "grey40") + 
+  ggtitle("Cumulative Fatality Rate by Cumulative Number of COVID-19 Cases") +
+  xlab("Cumulative Number of COVID-19 Cases") + 
+  ylab("Cumulative Fatality Rate") +
+  theme_light() +
+  theme(plot.title = element_text(size = 12),
+        legend.position = c(0.91, 0.85), 
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.background = element_rect(colour = "grey60", linetype = "dotted"),
+        legend.key.height = unit(0.3, "cm"))
+p
+```
+
+## Adding Interactivity (ggplotly)
+
+Finally, make the funnel plot interactive so that hovering reveals which sub-district is the outlier:
+
+```{r}
+fp_ggplotly <- ggplotly(p,
+                        tooltip = c("label", "x", "y"))
+fp_ggplotly
+```
+
+## Wrap-up of Part 4
+
+Funnel plots taught me one thing: **"fair comparison" is always more important than "direct comparison"**.
+
+The media often produces these rankings: "national hospital death rate ranking", "national school admission rate ranking". Without considering sample size, almost all such rankings are misleading. Funnel plots give us a standard method to ask: **is this difference real, or is it just random fluctuation caused by sample size?**
+
+# Overall Reflection
+
+Going through all four parts together, I realised something. **These four chapters are actually four levels of maturity in data visualisation thinking**.
+
+The first level is **seeing**: using ridgeline and raincloud to present the shape of the data faithfully, without being deceived by the simplifications of a boxplot.
+
+The second level is **admitting we do not know**: realising that every point estimate has uncertainty, and proactively drawing it with error bars and ggdist, rather than pretending we know more than we actually do.
+
+The third level is **backing visuals with statistics**: embedding the results of statistical tests directly into the chart, so the reader sees both the phenomenon and the evidence, instead of relying on verbal explanation to gloss things over.
+
+The fourth level is **comparing fairly**: using tools like funnel plots to make sure that comparisons account for sample size differences, so entities with small samples are not unfairly punished by random variation.
+
+Before this exercise I mostly stayed at the first level. After working through it, I am going to consciously push myself toward the next three levels. **The ultimate purpose of visualisation is not to look good, but to honestly communicate information**, so the reader can make correct judgements based on the chart.
+
+

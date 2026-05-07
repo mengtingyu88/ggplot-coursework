@@ -11,6 +11,10 @@ website:
         text: "Hands-on Ex 1"
       - href: Hands-on_Ex/Hands-on_Ex02/index.qmd
         text: "Hands-on Ex 2"
+      - href: Hands-on_Ex/Hands-on_Ex03/index.qmd
+        text: "Hands-on Ex 3"
+      - href: Hands-on_Ex/Hands-on_Ex04/index.qmd
+        text: "Hands-on Ex 4"
       - about.qmd
 
 format:

@@ -9,3 +9,4 @@ Welcome to my coursework website for ISSS608 Visual Analytics & Applications.
 - [Hands-on Exercise 1 - ggplot2 Basics](Hands-on_Ex/Hands-on_Ex01/index.html)
 - [Hands-on Exercise 2 - Beyond ggplot2](Hands-on_Ex/Hands-on_Ex02/index.html)
 - [Hands-on Exercise 3 - Programming Interactive Data Visualisation with R](Hands-on_Ex/Hands-on_Ex03/index.html)
+- [Hands-on Exercise 4 - Distribution, Uncertainty, Statistics & Funnel Plots](Hands-on_Ex/Hands-on_Ex04/index.html)
