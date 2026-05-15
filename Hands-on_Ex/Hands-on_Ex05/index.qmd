@@ -1,0 +1,823 @@
+---
+title: "Hands-on Exercise 5: Visualising Multivariate Data"
+author: "Meng Tingyu"
+date: "`r Sys.Date()`"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-copy: true
+    theme: cosmo
+    fig-width: 8
+    fig-height: 6
+    fig-align: center
+    smooth-scroll: true
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+  freeze: true
+editor: visual
+---
+
+# Learning Journey Overview
+
+Welcome to my fifth hands-on exercise. This time the focus is squarely on **multivariate data**, which is what most real datasets look like once we stop pretending the world has only two dimensions. Across the five sections below, I work through five complementary techniques, each suited to a slightly different analytical question:
+
+1.  **Ternary plots** for three-part compositional data (Chapter 13).
+2.  **Correlation visualisation** for pairwise relationships among many numerical variables (Chapter 6).
+3.  **Heatmaps** for spotting clusters and patterns across an entire matrix at once (Chapter 14).
+4.  **Parallel coordinates plots** for tracing how individual observations behave across many variables (Chapter 15).
+5.  **Treemaps** for hierarchical part-to-whole composition (Chapter 16).
+
+------------------------------------------------------------------------
+
+# Part 1: Ternary Plots for Compositional Data
+
+## What is a ternary plot, intuitively?
+
+A ternary plot is a triangle in which every point inside represents a **three-part composition that sums to 100%**. Each side of the triangle is one component, and the position of the point tells me how that observation splits between the three. The classic textbook example is soil composition (sand, silt, clay), but here I use it for Singapore's population structure: young, economically active, and old.
+
+The reason a ternary plot beats three separate bar charts is that the three proportions are *constrained*: if young goes up, one of the others must come down. The triangle visualises that trade-off directly.
+
+## Setting up the packages
+
+```{r}
+#| label: ternary-setup
+pacman::p_load(plotly, ggtern, tidyverse)
+```
+
+## Importing and preparing the data
+
+```{r}
+#| label: ternary-import
+#| eval: false
+pop_data <- read_csv("data/respopagsex2000to2018_tidy.csv")
+```
+
+The raw data has age groups in long format, but for a ternary plot I need exactly three numbers per row. So I bucket the age groups into `YOUNG`, `ACTIVE`, and `OLD`, then keep only 2018.
+
+```{r}
+#| label: ternary-mutate
+#| eval: false
+agpop_mutated <- pop_data %>%
+  mutate(`Year` = as.character(Year)) %>%
+  spread(AG, Population) %>%
+  mutate(YOUNG = rowSums(.[4:8])) %>%
+  mutate(ACTIVE = rowSums(.[9:16])) %>%
+  mutate(OLD = rowSums(.[17:21])) %>%
+  mutate(TOTAL = rowSums(.[22:24])) %>%
+  filter(Year == 2018) %>%
+  filter(TOTAL > 0)
+```
+
+What is actually happening here:
+
+-   `spread()` pivots age groups from rows to columns so I can sum them by category.
+-   `rowSums(.[4:8])` is a compact way to add specific columns by position. It works, but it is fragile if column order ever changes, so in production code I would probably use `select()` plus column names instead.
+-   The final `filter(TOTAL > 0)` removes subzones with no residents, which would otherwise be undefined on the triangle.
+
+## Building a static ternary plot
+
+```{r}
+#| label: ternary-static
+#| eval: false
+ggtern(data = agpop_mutated, 
+       aes(x = YOUNG, y = ACTIVE, z = OLD)) +
+  geom_point() +
+  labs(title = "Population structure, 2018") +
+  theme_rgbw()
+```
+
+`theme_rgbw()` gives the triangle a clean white background with light gridlines, which I find much easier to read than the default. The `ggtern` API uses `x`, `y`, and `z` instead of two axes, but otherwise everything composes like normal ggplot layers.
+
+## Building an interactive ternary plot
+
+For the interactive version I switch to `plot_ly()` with `type = "scatterternary"`. The interactivity is genuinely useful here because each point is a planning subzone, and being able to hover to identify which subzone has an unusually old or young profile is much more efficient than reading a legend.
+
+```{r}
+#| label: ternary-interactive
+#| eval: false
+label <- function(txt) {
+  list(
+    text = txt, 
+    x = 0.1, y = 1,
+    ax = 0, ay = 0,
+    xref = "paper", yref = "paper", 
+    align = "center",
+    font = list(family = "serif", size = 15, color = "white"),
+    bgcolor = "#b3b3b3", bordercolor = "black", borderwidth = 2
+  )
+}
+
+axis <- function(txt) {
+  list(
+    title = txt, tickformat = ".0%", tickfont = list(size = 10)
+  )
+}
+
+ternaryAxes <- list(
+  aaxis = axis("Young"), 
+  baxis = axis("Active"), 
+  caxis = axis("Old")
+)
+
+plot_ly(
+  agpop_mutated, 
+  a = ~YOUNG, 
+  b = ~ACTIVE, 
+  c = ~OLD, 
+  color = I("black"), 
+  type = "scatterternary"
+) %>%
+  layout(
+    annotations = label("Ternary Markers"), 
+    ternary = ternaryAxes
+  )
+```
+
+## My takeaway
+
+Ternary plots are surprisingly powerful when the data really is compositional. And They only make sense when the three parts logically sum to a whole. For Singapore's age structure, the cluster of points pulled towards the "active" corner tells the demographic story in one glance.
+
+------------------------------------------------------------------------
+
+# Part 2: Visual Correlation Analysis
+
+## Why bother visualising correlations?
+
+When I have ten or more numerical variables, eyeballing a correlation table of numbers is exhausting and error-prone. A visual correlation matrix solves three problems at once:
+
+1.  It reveals the **pairwise relationships** between variables at a glance.
+2.  It feeds into downstream analyses such as regression and factor analysis.
+3.  It acts as a **diagnostic** for multicollinearity before I run any model.
+
+For this section I use the Wine Quality dataset, with 11 numerical chemical properties across roughly 6,500 wines.
+
+## Packages
+
+```{r}
+#| label: corr-setup
+pacman::p_load(corrplot, ggstatsplot, tidyverse)
+```
+
+## Importing the data
+
+```{r}
+#| label: corr-import
+#| eval: false
+wine <- read_csv("data/wine_quality.csv")
+```
+
+## Method 1: Base R `pairs()`
+
+The simplest scatterplot matrix uses base R's `pairs()`:
+
+```{r}
+#| label: pairs-basic
+#| eval: false
+pairs(wine[, 2:12])
+```
+
+Since a correlation matrix is symmetric, showing both halves is redundant. I prefer to show only the lower half:
+
+```{r}
+#| label: pairs-lower
+#| eval: false
+pairs(wine[, 2:12], upper.panel = NULL)
+```
+
+And to be smarter still, I can replace one half with the actual correlation coefficients, sized by magnitude:
+
+```{r}
+#| label: panel-cor
+#| eval: false
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+  usr <- par("usr")
+  on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r <- abs(cor(x, y, use = "complete.obs"))
+  txt <- format(c(r, 0.123456789), digits = digits)[1]
+  txt <- paste(prefix, txt, sep = "")
+  if (missing(cex.cor)) cex.cor <- 0.8 / strwidth(txt)
+  text(0.5, 0.5, txt, cex = cex.cor * (1 + r) / 2)
+}
+
+pairs(wine[, 2:12], upper.panel = panel.cor)
+```
+
+::: callout-note
+## When `pairs()` breaks down
+
+With 6,500 observations the scatter clouds become huge inky blobs and stop being readable. That is exactly the limitation that motivates the corrgram approach below.
+:::
+
+## Method 2: `ggcorrmat()` from ggstatsplot
+
+`ggstatsplot::ggcorrmat()` is my favourite for **reporting**, because it produces a publication-ready figure with statistical annotation baked in:
+
+```{r}
+#| label: ggcorrmat
+#| eval: false
+ggstatsplot::ggcorrmat(
+  data = wine, 
+  cor.vars = 1:11,
+  ggcorrplot.args = list(outline.color = "black", 
+                         hc.order = TRUE,
+                         tl.cex = 10),
+  title = "Correlogram for wine dataset",
+  subtitle = "Four pairs are not significant at p < 0.05"
+)
+```
+
+`hc.order = TRUE` reorders the variables by hierarchical clustering, similar variables end up next to each other, so the block structure of the correlation matrix becomes visually obvious.
+
+For grouped comparisons (red wine vs white wine), I can use `grouped_ggcorrmat()`:
+
+```{r}
+#| label: grouped-ggcorrmat
+#| eval: false
+grouped_ggcorrmat(
+  data = wine,
+  cor.vars = 1:11,
+  grouping.var = type,
+  type = "robust",
+  p.adjust.method = "holm",
+  plotgrid.args = list(ncol = 2),
+  ggcorrplot.args = list(outline.color = "black", 
+                         hc.order = TRUE,
+                         tl.cex = 10),
+  annotation.args = list(
+    tag_levels = "a",
+    title = "Correlogram for wine dataset",
+    caption = "Dataset: UCI Machine Learning Repository"
+  )
+)
+```
+
+## Method 3: `corrplot` for fine control
+
+Where `ggcorrmat` is opinionated, `corrplot` is endlessly customisable. First I compute the correlation matrix explicitly:
+
+```{r}
+#| label: corrplot-cor
+#| eval: false
+wine.cor <- cor(wine[, 1:11])
+corrplot(wine.cor)
+```
+
+The default uses **circles**, with **blue for positive** and **red for negative** correlations, and **colour intensity for magnitude**.
+
+### Changing the visual encoding
+
+Seven `method` options exist (`circle`, `square`, `ellipse`, `number`, `shade`, `color`, `pie`). Ellipses are my go-to because the tilt of the ellipse encodes the sign of the correlation visually:
+
+```{r}
+#| label: corrplot-ellipse
+#| eval: false
+corrplot(wine.cor, 
+         method = "ellipse",
+         type = "lower",
+         diag = FALSE,
+         tl.col = "black")
+```
+
+### Mixed layout: glyphs on one side, numbers on the other
+
+This is the design I usually settle on for final reports because it captures both shape and exact magnitude in one figure:
+
+```{r}
+#| label: corrplot-mixed
+#| eval: false
+corrplot.mixed(wine.cor, 
+               lower = "ellipse", 
+               upper = "number",
+               tl.pos = "lt",
+               diag = "l",
+               tl.col = "black")
+```
+
+### Significance testing overlay
+
+Correlation strength is not the whole story.
+
+```{r}
+#| label: corrplot-sig
+#| eval: false
+wine.sig = cor.mtest(wine.cor, conf.level = .95)
+
+corrplot(wine.cor,
+         method = "number",
+         type = "lower",
+         diag = FALSE,
+         tl.col = "black",
+         tl.srt = 45,
+         p.mat = wine.sig$p,
+         sig.level = .05)
+```
+
+Non-significant cells get crossed out, which is much more informative than presenting raw r-values as if they were all equally trustworthy.
+
+### Reordering with hierarchical clustering
+
+Reordering is where corrgrams really earn their keep. By default the variables appear in whatever order the dataframe had them, which is rarely the most informative arrangement:
+
+```{r}
+#| label: corrplot-hclust
+#| eval: false
+corrplot(wine.cor, 
+         method = "ellipse", 
+         tl.pos = "lt",
+         tl.col = "black",
+         order = "hclust",
+         hclust.method = "ward.D",
+         addrect = 3)
+```
+
+The `addrect = 3` argument draws boxes around three clusters.
+
+## My takeaway
+
+For exploration I reach for `corrplot` because of its flexibility. For formal reports I prefer `ggcorrmat` because the statistical annotation is built in. Either way, **reordering by clustering** is the single most underrated technique here, it transforms a chaotic matrix into a structured one.
+
+------------------------------------------------------------------------
+
+# Part 3: Heatmaps for Multivariate Patterns
+
+## What heatmaps are good at
+
+A heatmap is essentially a coloured table. Rows are observations, columns are variables, and each cell's colour encodes a value. The reason this works so well is that human vision is very good at picking out **horizontal bands of similar colour** (similar observations) and **vertical bands** (related variables). Adding dendrograms on the sides lets the algorithm reorder both axes so those bands actually emerge.
+
+For this section I use the World Happiness 2018 dataset.
+
+## Packages
+
+```{r}
+#| label: heatmap-setup
+pacman::p_load(seriation, dendextend, heatmaply, tidyverse)
+```
+
+## Importing and preparing the data
+
+```{r}
+#| label: heatmap-import
+#| eval: false
+wh <- read_csv("data/WHData-2018.csv")
+row.names(wh) <- wh$Country
+```
+
+Setting row names to country names is essential, otherwise the heatmap labels are useless row numbers. The next step is converting to a matrix because most heatmap functions require that input class:
+
+```{r}
+#| label: heatmap-matrix
+#| eval: false
+wh_matrix <- data.matrix(wh)
+```
+
+## Static heatmap with `heatmap()`
+
+The base R `heatmap()` is a fine starting point:
+
+```{r}
+#| label: heatmap-static
+#| eval: false
+wh_heatmap <- heatmap(wh_matrix,
+                      Rowv = NA, Colv = NA)
+```
+
+With `Rowv = NA` and `Colv = NA`, both dendrograms are switched off, so I see the raw matrix with no reordering. That is rarely what I want, but it is useful as a baseline.
+
+### The scaling problem
+
+If I plot the matrix without scaling, one variable (Happiness Score) dominates because its raw values are much larger than the others. Everything else looks washed out. Column-wise scaling fixes this:
+
+```{r}
+#| label: heatmap-scaled
+#| eval: false
+wh_heatmap <- heatmap(wh_matrix,
+                      scale = "column",
+                      cexRow = 0.6, 
+                      cexCol = 0.8,
+                      margins = c(10, 4))
+```
+
+`scale = "column"` z-scores each column, so every variable now contributes on equal footing. **This is a small change with an enormous effect on interpretability**.
+
+## Interactive heatmap with `heatmaply`
+
+`heatmaply` produces interactive heatmaps that render as standalone HTML.
+
+```{r}
+#| label: heatmaply-basic
+#| eval: false
+heatmaply(wh_matrix[, -c(1, 2, 4, 5)])
+```
+
+### Three data transformation methods
+
+`heatmaply` offers three transformations, and choosing between them is more than cosmetic:
+
+```{r}
+#| label: heatmaply-scale
+#| eval: false
+# Scaling: assumes (or imposes) normal-like distributions
+heatmaply(wh_matrix[, -c(1, 2, 4, 5)],
+          scale = "column")
+
+# Normalising: maps to [0, 1] using min and max
+heatmaply(normalize(wh_matrix[, -c(1, 2, 4, 5)]))
+
+# Percentising: maps each value to its empirical percentile
+heatmaply(percentize(wh_matrix[, -c(1, 2, 4, 5)]))
+```
+
+-   **Scale** when variables are roughly normal and outliers are meaningful.
+-   **Normalise** when distributions are skewed but I still want raw shape preserved.
+-   **Percentise** when I care about relative rank rather than absolute values, which is often the case for indicators across countries.
+
+### Picking the right clustering setup
+
+Choosing a clustering method by intuition feels arbitrary. The `dendextend` package lets me pick statistically:
+
+```{r}
+#| label: dendextend-pick
+#| eval: false
+wh_d <- dist(normalize(wh_matrix[, -c(1, 2, 4, 5)]), method = "euclidean")
+dend_expend(wh_d)[[3]]
+```
+
+The output table shows an `optim` score for each clustering method. The highest score wins, which in this dataset is `average`. Then I find the best number of clusters:
+
+```{r}
+#| label: dendextend-k
+#| eval: false
+wh_clust <- hclust(wh_d, method = "average")
+num_k <- find_k(wh_clust)
+plot(num_k)
+```
+
+Putting both choices into the heatmap call:
+
+```{r}
+#| label: heatmaply-clustered
+#| eval: false
+heatmaply(normalize(wh_matrix[, -c(1, 2, 4, 5)]),
+          dist_method = "euclidean",
+          hclust_method = "average",
+          k_row = 3)
+```
+
+### Seriation: getting the row order right
+
+Clustering tells me the *tree structure*, but it does not tell me how to *rotate* the branches. Two valid orderings of the same cluster tree can produce very different-looking heatmaps. The `seriate = "OLO"` (Optimal Leaf Ordering) argument fixes this by minimising the sum of dissimilarities between adjacent rows:
+
+```{r}
+#| label: heatmaply-olo
+#| eval: false
+heatmaply(normalize(wh_matrix[, -c(1, 2, 4, 5)]),
+          seriate = "OLO")
+```
+
+### Final polished version
+
+Putting it all together with thoughtful styling:
+
+```{r}
+#| label: heatmaply-final
+#| eval: false
+heatmaply(normalize(wh_matrix[, -c(1, 2, 4, 5)]),
+          Colv = NA,
+          seriate = "none",
+          colors = Blues,
+          k_row = 5,
+          margins = c(NA, 200, 60, NA),
+          fontsize_row = 4,
+          fontsize_col = 5,
+          main = "World Happiness Score and Variables by Country, 2018",
+          xlab = "World Happiness Indicators",
+          ylab = "World Countries")
+```
+
+## My takeaway
+
+Heatmaps reward attention to three details: **scaling**, **clustering choice**, and **leaf ordering**. Get all three right and the patterns essentially announce themselves. Get any one wrong and the chart can mislead.
+
+------------------------------------------------------------------------
+
+# Part 4: Parallel Coordinates Plots
+
+## What parallel coordinates plots do differently
+
+If a scatterplot matrix shows me *pairwise* relationships, a parallel coordinates plot shows me **whole observations as lines** across many variables. Each vertical axis is one variable. Each line is one observation, threading through all the variables in sequence. This is uniquely good at:
+
+-   Identifying clusters of similarly-behaved observations.
+-   Spotting outliers that take an unusual path across variables.
+-   Characterising customer segments or country groupings.
+
+## Packages
+
+```{r}
+#| label: parcoord-setup
+pacman::p_load(GGally, parallelPlot, tidyverse)
+```
+
+## Importing the data
+
+```{r}
+#| label: parcoord-import
+#| eval: false
+wh <- read_csv("data/WHData-2018.csv")
+```
+
+## Static plot with `ggparcoord()`
+
+A bare-minimum plot:
+
+```{r}
+#| label: parcoord-basic
+#| eval: false
+ggparcoord(data = wh, 
+           columns = c(7:12))
+```
+
+This is honestly not very useful on its own. Without colour or scaling, all lines pile on top of each other. The makeover below is where it becomes informative:
+
+```{r}
+#| label: parcoord-improved
+#| eval: false
+ggparcoord(data = wh, 
+           columns = c(7:12), 
+           groupColumn = 2,
+           scale = "uniminmax",
+           alphaLines = 0.2,
+           boxplot = TRUE, 
+           title = "Parallel Coordinates Plot of World Happiness Variables")
+```
+
+The four arguments that transform this chart:
+
+-   `groupColumn = 2` colours lines by Region, which is where regional patterns start to emerge.
+-   `scale = "uniminmax"` puts every axis on a 0-to-1 range, so axes are comparable.
+-   `alphaLines = 0.2` makes lines semi-transparent, so overlapping bundles look denser. This is essential for any dataset above maybe 30 observations.
+-   `boxplot = TRUE` overlays a boxplot per axis, summarising distribution shape.
+
+### Faceting by region
+
+For comparing regions head-to-head, faceting works beautifully:
+
+```{r}
+#| label: parcoord-facet
+#| eval: false
+ggparcoord(data = wh, 
+           columns = c(7:12), 
+           groupColumn = 2,
+           scale = "uniminmax",
+           alphaLines = 0.2,
+           boxplot = TRUE, 
+           title = "Parallel Coordinates by Region") +
+  facet_wrap(~ Region) + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+The `angle = 30, hjust = 1` combination rotates and right-aligns axis labels so they do not overlap the plot, which is a small detail that makes a big visual difference.
+
+## Interactive plot with `parallelPlot`
+
+For exploratory work, interactivity is genuinely useful here because clicking on an axis recolours all lines by that variable, which is the fastest way to ask "what drives this variable?":
+
+```{r}
+#| label: parcoord-interactive
+#| eval: false
+wh <- wh %>%
+  select("Happiness score", c(7:12))
+
+parallelPlot(wh,
+             rotateTitle = TRUE)
+```
+
+### Customising colour and adding histograms
+
+```{r}
+#| label: parcoord-histo
+#| eval: false
+parallelPlot(wh,
+             continuousCS = "YlOrRd",
+             rotateTitle = TRUE)
+
+histoVisibility <- rep(TRUE, ncol(wh))
+parallelPlot(wh,
+             rotateTitle = TRUE,
+             histoVisibility = histoVisibility)
+```
+
+The histograms along each axis are an underrated feature, because they show me the marginal distribution of each variable without leaving the chart.
+
+## My takeaway
+
+Parallel coordinates plots have a steep aesthetic learning curve. The defaults look terrible. But once I add scaling, transparency, grouping colour, and boxplots, they become one of the most informative views possible for medium-sized multivariate datasets. The interactive version is what I would actually use in a live exploratory session.
+
+------------------------------------------------------------------------
+
+# Part 5: Treemap for Hierarchical Composition
+
+## When to use a treemap
+
+Treemaps shine for **hierarchical part-to-whole** data where I care about both the level of the hierarchy and the relative sizes of leaves. Classic use cases:
+
+-   Budget breakdowns by department and team.
+-   Stock market sectors and constituent companies.
+-   Property transactions by region, planning area, and project (which is exactly what I do here).
+
+The two things I will always encode are **rectangle size** (a magnitude) and **rectangle colour** (a separate metric, often a rate or median).
+
+## Packages
+
+```{r}
+#| label: treemap-setup
+pacman::p_load(treemap, treemapify, tidyverse)
+```
+
+## Data wrangling
+
+The raw REALIS 2018 dataset is at the transaction level. A treemap needs aggregated values, so I group and summarise:
+
+```{r}
+#| label: treemap-import
+#| eval: false
+realis2018 <- read_csv("data/realis2018.csv")
+
+realis2018_summarised <- realis2018 %>% 
+  group_by(`Project Name`, `Planning Region`, 
+           `Planning Area`, `Property Type`, 
+           `Type of Sale`) %>%
+  summarise(`Total Unit Sold` = sum(`No. of Units`, na.rm = TRUE), 
+            `Total Area` = sum(`Area (sqm)`, na.rm = TRUE),
+            `Median Unit Price ($ psm)` = median(`Unit Price ($ psm)`, na.rm = TRUE),
+            `Median Transacted Price` = median(`Transacted Price ($)`, na.rm = TRUE))
+```
+
+Notice the pipe pattern: group, then summarise. This is one of those dplyr workflows that you internalise once and then use forever. The `na.rm = TRUE` is essential because any missing value in a column would otherwise propagate to the whole summary.
+
+Filter to a single property type and sale type to keep the example focused:
+
+```{r}
+#| label: treemap-filter
+#| eval: false
+realis2018_selected <- realis2018_summarised %>%
+  filter(`Property Type` == "Condominium", 
+         `Type of Sale` == "Resale")
+```
+
+## Static treemap with `treemap()`
+
+The three arguments that do most of the work are `index`, `vSize`, and `vColor`:
+
+```{r}
+#| label: treemap-basic
+#| eval: false
+treemap(realis2018_selected,
+        index = c("Planning Region", "Planning Area", "Project Name"),
+        vSize = "Total Unit Sold",
+        vColor = "Median Unit Price ($ psm)",
+        title = "Resale Condominium by Planning Region and Area, 2018",
+        title.legend = "Median Unit Price (S$ per sq. m)")
+```
+
+::: callout-warning
+## A subtle gotcha
+
+By default, `vColor` does not actually map to a colour gradient. Without setting `type`, `treemap()` assumes `type = "index"` and colours rectangles by hierarchy category instead of by the numeric variable.
+:::
+
+### Fixing the colour mapping
+
+To actually map colour to the numeric variable, I need to set `type`:
+
+```{r}
+#| label: treemap-value
+#| eval: false
+treemap(realis2018_selected,
+        index = c("Planning Region", "Planning Area", "Project Name"),
+        vSize = "Total Unit Sold",
+        vColor = "Median Unit Price ($ psm)",
+        type = "value",
+        title = "Resale Condominium by Planning Region and Area, 2018",
+        title.legend = "Median Unit Price (S$ per sq. m)")
+```
+
+### "value" vs "manual": what is the difference?
+
+This tripped me up at first. Both use `vColor`, but the mapping logic differs:
+
+-   `type = "value"` treats the palette as **diverging around zero**. Negative values pull towards the left-end colour, positive values pull towards the right. Good for data that can be negative.
+-   `type = "manual"` maps **min(values) to the left end and max(values) to the right end**, with mean in the middle. Good for strictly-positive data.
+
+For unit prices, which are all positive, `manual` with a sequential palette like `Blues` is the right combination:
+
+```{r}
+#| label: treemap-manual
+#| eval: false
+treemap(realis2018_selected,
+        index = c("Planning Region", "Planning Area", "Project Name"),
+        vSize = "Total Unit Sold",
+        vColor = "Median Unit Price ($ psm)",
+        type = "manual",
+        palette = "Blues", 
+        title = "Resale Condominium by Planning Region and Area, 2018",
+        title.legend = "Median Unit Price (S$ per sq. m)")
+```
+
+### Layout algorithms
+
+`treemap` supports two algorithms:
+
+-   **squarified**: optimises aspect ratios so rectangles are close to squares. Ignores sort order.
+-   **pivotSize** (default): respects a `sortID` ordering at the cost of slightly worse aspect ratios.
+
+```{r}
+#| label: treemap-algo
+#| eval: false
+treemap(realis2018_selected,
+        index = c("Planning Region", "Planning Area", "Project Name"),
+        vSize = "Total Unit Sold",
+        vColor = "Median Unit Price ($ psm)",
+        type = "manual",
+        palette = "Blues", 
+        algorithm = "pivotSize",
+        sortID = "Median Transacted Price",
+        title = "Sorted by Median Transacted Price")
+```
+
+I usually pick `squarified` for purely visual comparison and `pivotSize` with `sortID` when there is a meaningful order to encode.
+
+## Treemap with `treemapify` (ggplot grammar)
+
+`treemapify` lets me build treemaps inside ggplot, which is great when I want to combine with other ggplot features:
+
+```{r}
+#| label: treemapify-basic
+#| eval: false
+ggplot(data = realis2018_selected, 
+       aes(area = `Total Unit Sold`,
+           fill = `Median Unit Price ($ psm)`,
+           subgroup = `Planning Region`,
+           subgroup2 = `Planning Area`)) + 
+  geom_treemap() +
+  geom_treemap_subgroup2_border(colour = "gray40", size = 2) +
+  geom_treemap_subgroup_border(colour = "gray20")
+```
+
+The two `*_border` layers draw nested borders for each hierarchy level, which makes the structure visually obvious. I find this version cleaner than the `treemap()` output for final reports.
+
+## Interactive treemap with `d3treeR`
+
+For drilldown exploration, the interactive `d3treeR` package wraps a `treemap` object into a clickable d3 visualisation:
+
+```{r}
+#| label: d3tree-install
+#| eval: false
+# install.packages("devtools")
+# library(devtools)
+# install_github("timelyportfolio/d3treeR")
+library(d3treeR)
+```
+
+```{r}
+#| label: d3tree-build
+#| eval: false
+tm <- treemap(realis2018_summarised,
+        index = c("Planning Region", "Planning Area"),
+        vSize = "Total Unit Sold",
+        vColor = "Median Unit Price ($ psm)",
+        type = "value",
+        title = "Private Residential Property Sold, 2018",
+        title.legend = "Median Unit Price (S$ per sq. m)")
+
+d3tree(tm, rootname = "Singapore")
+```
+
+Clicking a region zooms into that region's planning areas. For a stakeholder-facing dashboard this is genuinely useful, because it lets the viewer explore at their own pace instead of forcing one fixed view.
+
+## My takeaway
+
+Treemaps are easy to make wrong and reasonably easy to make right. The two non-negotiables are: (1) set `type` explicitly so colour actually maps to your numeric variable, and (2) use a sequential palette when values are strictly positive. Everything else is polish.
+
+------------------------------------------------------------------------
+
+# Closing Reflections
+
+| Chart type | Best for | Watch out for |
+|------------------------|------------------------|------------------------|
+| **Ternary plot** | Three-part compositions | Only works if parts sum to a whole |
+| **Correlation visualisation** | Pairwise numerical relationships | Reorder by clustering, always |
+| **Heatmap** | Multivariate patterns and clusters | Scale your data, choose seriation carefully |
+| **Parallel coordinates** | Tracing observations across variables | Use transparency and grouping colour |
+| **Treemap** | Hierarchical part-to-whole | Set `type` explicitly, pick palette to match data sign |
+
+What unifies them is that each one is a different answer to the same question: **how do I see structure in a dataset that has more than two or three dimensions?**
