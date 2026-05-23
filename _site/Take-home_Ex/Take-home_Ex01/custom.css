@@ -1,0 +1,50 @@
+/* Additional fine-tuning beyond the SCSS theme */
+
+/* Smooth animations on scroll into view for callouts */
+.callout {
+  transition: box-shadow .25s ease, transform .25s ease;
+}
+.callout:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,.06);
+}
+
+/* Plotly / ggiraph containers — keep them aligned and breathing */
+.plotly, .girafe_container_std {
+  margin: 1.5rem auto !important;
+  display: block;
+}
+
+/* Mermaid diagram framing */
+.mermaid {
+  background: #ffffff;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  border: 1px solid #eeeeee;
+  border-radius: 0;
+}
+
+/* Make the chunk-toggle button less obtrusive */
+.code-tools-button {
+  background: transparent;
+  color: #999999;
+  border: 1px solid #e0e0e0;
+  border-radius: 0;
+  font-size: 0.8rem;
+}
+.code-tools-button:hover {
+  color: #111111;
+  border-color: #111111;
+}
+
+/* Section numbers - subtle grey */
+.header-section-number {
+  color: #aaaaaa;
+  font-weight: 400;
+  margin-right: 0.6rem;
+}
+
+/* Print-friendly */
+@media print {
+  body { background: white; }
+  .callout, table { page-break-inside: avoid; }
+}

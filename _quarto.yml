@@ -4,17 +4,28 @@ project:
 website:
   title: "ISSS608-VAA"
   navbar:
+    background: light
     left:
       - href: index.qmd
         text: Home
-      - href: Hands-on_Ex/Hands-on_Ex01/index.qmd
-        text: "Hands-on Ex 1"
-      - href: Hands-on_Ex/Hands-on_Ex02/index.qmd
-        text: "Hands-on Ex 2"
-      - href: Hands-on_Ex/Hands-on_Ex03/index.qmd
-        text: "Hands-on Ex 3"
-      - href: Hands-on_Ex/Hands-on_Ex04/index.qmd
-        text: "Hands-on Ex 4"
+      - text: "Hands-on Ex"
+        menu:
+          - href: Hands-on_Ex/Hands-on_Ex01/index.qmd
+            text: "Hands-on Ex 1 · ggplot2 Basics"
+          - href: Hands-on_Ex/Hands-on_Ex02/index.qmd
+            text: "Hands-on Ex 2 · Beyond ggplot2"
+          - href: Hands-on_Ex/Hands-on_Ex03/index.qmd
+            text: "Hands-on Ex 3 · Interactive Data Viz"
+          - href: Hands-on_Ex/Hands-on_Ex04/index.qmd
+            text: "Hands-on Ex 4 · Distribution, Uncertainty & Statistics"
+          - href: Hands-on_Ex/Hands-on_Ex05/index.qmd
+            text: "Hands-on Ex 5 · Multivariate Data"
+      - text: "Take-home Ex"
+        menu:
+          - href: Take-home_Ex/Take-home_Ex01/index.qmd
+            text: "Take-home Ex 1 · Technical Report"
+          - href: Take-home_Ex/Take-home_Ex01/exec_summary.qmd
+            text: "Take-home Ex 1 · Executive Summary"
       - about.qmd
 
 format:
