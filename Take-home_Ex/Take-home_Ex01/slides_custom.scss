@@ -1,0 +1,285 @@
+/*-- scss:defaults --*/
+
+// White Research Center — minimalist academic style for revealjs
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+// Colour palette: monochrome with single accent
+$body-bg:           #F2F2F2;
+$body-color:        #1a1a1a;
+$primary:           #111111;
+$secondary:         #666666;
+$accent:            #C8102E;
+$success:           #2E7D32;
+
+// Typography
+$font-family-sans-serif: 'Inter', -apple-system, sans-serif !default;
+$presentation-font-family: 'Inter', -apple-system, sans-serif !default;
+$presentation-heading-font: 'Oswald', sans-serif !default;
+$presentation-heading-color: $primary !default;
+$presentation-heading-weight: 700 !default;
+
+$presentation-font-size-root: 28px !default;
+$presentation-h1-font-size: 2.5em !default;
+$presentation-h2-font-size: 1.8em !default;
+$presentation-h3-font-size: 1.3em !default;
+
+// Code
+$code-block-bg: #FAFAFA;
+$code-color: $accent;
+
+// Link
+$link-color: $accent;
+$link-color-hover: lighten($accent, 10%);
+
+/*-- scss:rules --*/
+
+// ==== Page background with diagonal geometric lines ====
+.reveal {
+  background:
+    linear-gradient(115deg, transparent 38%, rgba(0,0,0,0.025) 38.2%, transparent 38.5%),
+    linear-gradient(115deg, transparent 60%, rgba(0,0,0,0.020) 60.3%, transparent 60.6%),
+    linear-gradient( 75deg, transparent 28%, rgba(0,0,0,0.018) 28.2%, transparent 28.4%),
+    linear-gradient( 75deg, transparent 72%, rgba(0,0,0,0.022) 72.2%, transparent 72.4%),
+    linear-gradient(165deg, transparent 48%, rgba(0,0,0,0.015) 48.2%, transparent 48.4%),
+    #F2F2F2;
+  font-family: $font-family-sans-serif;
+}
+
+// ==== Headings — Oswald uppercase, weighty ====
+.reveal h1, .reveal h2, .reveal h3 {
+  font-family: $presentation-heading-font !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: $primary;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.reveal h1 {
+  font-size: $presentation-h1-font-size;
+  margin-bottom: 0.4em;
+}
+
+.reveal h2 {
+  font-size: $presentation-h2-font-size;
+  border-bottom: 3px solid $primary;
+  padding-bottom: 0.3em;
+  margin-bottom: 0.8em;
+}
+
+.reveal h3 {
+  font-size: $presentation-h3-font-size;
+  color: #333;
+}
+
+// ==== Cover slide — large centred title ====
+.reveal .title-slide {
+  text-align: center;
+
+  h1.title {
+    font-size: 3.8em !important;
+    font-weight: 700;
+    border: none;
+    margin-bottom: 0.2em;
+    line-height: 1;
+  }
+
+  p.subtitle {
+    font-size: 1em;
+    color: $secondary;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    text-transform: none;
+  }
+
+  p.author, p.date {
+    font-size: 0.6em;
+    color: $secondary;
+    margin-top: 1.5em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+}
+
+// ==== Body text ====
+.reveal p, .reveal li {
+  color: $body-color;
+  line-height: 1.5;
+  font-size: 0.85em;
+}
+
+.reveal strong { color: $primary; font-weight: 600; }
+
+.reveal em {
+  font-style: italic;
+  color: $secondary;
+}
+
+// ==== Blockquote — pulled quote style ====
+.reveal blockquote {
+  border-left: 4px solid $accent;
+  background: rgba(0,0,0,0.025);
+  padding: 0.8em 1.2em;
+  font-style: italic;
+  color: #333;
+  width: 90%;
+  margin: 1em auto;
+  box-shadow: none;
+}
+
+// ==== Code ====
+.reveal pre {
+  background: $code-block-bg;
+  border-left: 3px solid $primary;
+  box-shadow: none;
+  font-size: 0.6em;
+}
+
+.reveal code {
+  color: $accent;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.85em;
+  background: rgba(200,16,46,0.08);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+// ==== Tables ====
+.reveal table {
+  font-size: 0.7em;
+  margin: 0 auto;
+  border-collapse: collapse;
+}
+
+.reveal table th {
+  background: $primary;
+  color: white;
+  font-family: $presentation-heading-font;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 0.5em 0.8em;
+  border: none;
+}
+
+.reveal table td {
+  padding: 0.4em 0.8em;
+  border-bottom: 1px solid #ddd;
+}
+
+.reveal table tr:nth-child(even) td {
+  background: rgba(0,0,0,0.02);
+}
+
+// ==== Callouts ====
+.reveal .callout {
+  font-size: 0.8em;
+  margin: 0.8em 0;
+  border-radius: 0;
+  border-left-width: 4px !important;
+}
+
+.reveal .callout-title {
+  font-family: $presentation-heading-font;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+// ==== KPI cards (custom) ====
+.kpi-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.5em 0;
+}
+
+.kpi-card {
+  flex: 1;
+  background: white;
+  padding: 1.2em 0.8em;
+  text-align: center;
+  border-top: 4px solid $primary;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.kpi-card.accent { border-top-color: $accent; }
+.kpi-card.success { border-top-color: $success; }
+
+.kpi-value {
+  font-family: $presentation-heading-font;
+  font-size: 2.2em;
+  font-weight: 700;
+  color: $primary;
+  line-height: 1;
+  display: block;
+}
+
+.kpi-card.accent .kpi-value { color: $accent; }
+.kpi-card.success .kpi-value { color: $success; }
+
+.kpi-label {
+  font-size: 0.55em;
+  color: $secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-top: 0.4em;
+}
+
+// ==== Slide numbers & footer ====
+.reveal .slide-number {
+  font-family: $presentation-heading-font;
+  font-size: 12px;
+  color: $secondary;
+  background: transparent;
+  letter-spacing: 0.1em;
+}
+
+.reveal .footer {
+  color: $secondary;
+  font-size: 0.55em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+// ==== Lists with subtle markers ====
+.reveal ul li::marker {
+  color: $accent;
+}
+
+// ==== Two-column layout helper ====
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+// ==== Large lead text ====
+.lead {
+  font-size: 1.3em !important;
+  line-height: 1.4;
+  color: #222;
+}
+
+// ==== Figure caption ====
+.reveal .figure .caption,
+.reveal figcaption {
+  font-size: 0.6em;
+  color: $secondary;
+  font-style: italic;
+  margin-top: 0.5em;
+}
+
+// ==== Diagonal accent stripe at top-right of every slide ====
+.reveal .slides section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.04) 50%);
+  pointer-events: none;
+}

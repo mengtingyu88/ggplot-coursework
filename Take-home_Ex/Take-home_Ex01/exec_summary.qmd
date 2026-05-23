@@ -1,0 +1,805 @@
+---
+title: "Insurance Portfolio<br>Profitability & Volatility"
+subtitle: "A Visual-Analytics Investigation of a 354k-policy Spanish Motor Book"
+author: "Meng Tingyu · ISSS608 Take-home Exercise 1"
+date: "`r Sys.Date()`"
+format:
+  revealjs:
+    theme: [default, slides_custom.scss]
+    slide-number: c/t
+    show-slide-number: all
+    transition: fade
+    transition-speed: fast
+    width: 1280
+    height: 760
+    margin: 0.07
+    fig-cap-location: bottom
+    fig-align: center
+    chalkboard: false
+    progress: true
+    history: true
+    code-line-numbers: false
+    highlight-style: github
+    embed-resources: false
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: true
+  freeze: auto
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = FALSE,
+  warning   = FALSE,
+  message   = FALSE,
+  fig.align = "center",
+  dpi       = 110,
+  out.width = "100%"
+)
+options(scipen = 999, digits = 4)
+
+pacman::p_load(
+  tidyverse, lubridate, scales, knitr, kableExtra,
+  ggridges, ggdist, ggrepel, ggstatsplot, ggcorrplot,
+  patchwork, ggtext, glue,
+  plotly, ggiraph, crosstalk
+)
+
+# Load the analytical sandbox prepared by the technical report (index.qmd)
+sandbox <- readRDS("data/analytical_sandbox.rds")
+
+# Shared minimalist theme used across slides
+theme_wrc <- function(base_size = 11) {
+  theme_minimal(base_size = base_size, base_family = "Inter") +
+    theme(
+      plot.title       = element_text(face = "bold", size = rel(1.05),
+                                      color = "#111111"),
+      plot.subtitle    = element_text(color = "#555555", size = rel(0.9)),
+      plot.background  = element_rect(fill = "transparent", color = NA),
+      panel.background = element_rect(fill = "transparent", color = NA),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "#EAEAEA"),
+      axis.text        = element_text(color = "#333333"),
+      strip.text       = element_text(face = "bold", color = "#111111"),
+      strip.background = element_rect(fill = "#F0F0F0", color = NA),
+      legend.position  = "top"
+    )
+}
+
+# Headline portfolio metrics used repeatedly across slides
+portfolio_lr        <- with(sandbox, sum(total_incurred) / sum(total_premium))
+n_records           <- nrow(sandbox)
+n_policies          <- dplyr::n_distinct(sandbox$insured_id %||% sandbox$policy_id %||% seq_len(n_records))
+total_premium_eur   <- sum(sandbox$total_premium)
+total_incurred_eur  <- sum(sandbox$total_incurred)
+```
+
+## Contents {.smaller}
+
+::::: columns
+::: {.column width="50%"}
+**Part I. Setup**
+
+1.  Setting the scene
+2.  The data and sandbox
+3.  Univariate landscape, numerical
+4.  Univariate landscape, categorical
+
+**Part II. Profitability**
+
+5.  LR by categorical drivers
+6.  Statistical validation
+7.  Continuous drivers and heatmap
+:::
+
+::: {.column width="50%"}
+**Part III. Volatility**
+
+8.  Lorenz curve and tail concentration
+9.  Frequency vs. severity quadrant
+
+**Part IV. Temporal and interactive**
+
+10. Diagnosing the deterioration
+11. Interactive analytics (bonus)
+
+**Part V. Synthesis**
+
+12. Findings and recommendations
+:::
+:::::
+
+::: notes
+The deck has five parts. Part one is setup. I look at the marginal distribution of each variable before any cross-comparisons, so I know what I'm working with. Part two is the profitability side, where loss ratio is the main metric and every visual is paired with a statistical test. Part three switches the question from how unprofitable to how unstable, since volatility matters as much as the average. Part four adds the time dimension and three interactive widgets for the bonus marks. Part five wraps up with findings and what I would do next. Throughout the deck I keep the same layout. Visual on one side, short interpretation on the other, and a statistical anchor whenever I claim there is a real difference.
+:::
+
+## Setting the Scene {.smaller}
+
+> *"Insurers often carry underperforming portfolios where the root causes of poor profitability and high volatility are unknown."*
+
+::::::: kpi-row
+::: kpi-card
+[`r format(n_records, big.mark=",")`]{.kpi-value} [Policy-years]{.kpi-label}
+:::
+
+::: {.kpi-card .accent}
+[`r scales::percent(portfolio_lr, 0.1)`]{.kpi-value} [Portfolio Loss Ratio]{.kpi-label}
+:::
+
+::: kpi-card
+[2022 to 2024]{.kpi-value} [Observation window]{.kpi-label}
+:::
+
+::: {.kpi-card .success}
+[47]{.kpi-value} [Variables]{.kpi-label}
+:::
+:::::::
+
+[**The remediation question.**]{.lead} A portfolio Loss Ratio of `r scales::percent(portfolio_lr, 0.1)` looks fine on average, but averages hide a lot of leakage. I want to know *where* the LR is mis-distributed across product, driver, vehicle and time, and *how* unstable each pocket is. Both questions get answered visually first, then validated with statistics.
+
+::: notes
+The quote at the top sums up the problem. Bad books rarely fail because there is no signal in the data. They fail because the signal is scattered across many variables, and no single dashboard pulls it together. The four KPI cards are the numbers I keep coming back to. The portfolio loss ratio sits around 70 percent, which on its own sounds okay. Most insurers aim for a combined ratio under 95 percent, and loss is the biggest part of that. But the word "average" is doing a lot of work. The same 70 percent can come from a stable book that bounces between 60 and 80, or a volatile one where most policies claim nothing but the top one percent eats ten times its premium. Telling those two worlds apart is the job of this study.
+:::
+
+## The Data and Analytical Sandbox {.smaller}
+
+::::: two-col
+<div>
+
+**Source.** Real-world Spanish motor-insurance dataset, Mendeley Data ([link](https://data.mendeley.com/)).
+
+**Scale.** `r format(n_records, big.mark=",")` policy-year records over `r format(dplyr::n_distinct(sandbox$year), big.mark=",")` calendar years.
+
+**Variable families (47 in total)**
+
+-   Policy and insured: 8
+-   Driver and vehicle: 10
+-   Premiums: 8
+-   Claim counts: 10
+-   Incurred losses: 10
+-   Exposure: 2
+
+**Derived KPIs.** `loss_ratio`, `pure_premium`, `claim_frequency`, `severity`, a `large_loss` flag, plus six banded continuous variables for stratified analysis.
+
+</div>
+
+<div>
+
+```{r}
+#| label: fig-workflow
+#| fig-width: 6.5
+#| fig-height: 5.5
+#| out-width: "100%"
+
+library(ggplot2)
+nodes <- tibble::tribble(
+  ~x, ~y, ~label,                  ~fill,
+   1, 5, "Raw CSV\n354k x 47",     "#F5F5F5",
+   1, 3.5, "Wrangle\n(tidyverse)", "#F5F5F5",
+   1, 2, "Analytical Sandbox\n+ KPIs", "#FAFAFA",
+   3, 4, "Univariate\nEDA",        "#FFFFFF",
+   3, 2, "Bivariate +\nStat Tests","#FFFFFF",
+   5, 4, "Profitability\nDrivers", "#FFFFFF",
+   5, 2, "Volatility &\nTail Risk","#FFFFFF",
+   7, 3, "Interactive\nCross-filtering", "#FFFFFF",
+   9, 3, "Underwriting\nInsight",  "#222222"
+)
+edges <- tibble::tribble(
+  ~x1, ~y1, ~x2, ~y2,
+   1,5,    1,3.7,
+   1,3.3,  1,2.2,
+   1.3,2,  2.7,4,
+   1.3,2,  2.7,2,
+   3.3,4,  4.7,4,
+   3.3,2,  4.7,2,
+   5.3,4,  6.7,3.2,
+   5.3,2,  6.7,2.8,
+   7.3,3,  8.7,3
+)
+ggplot() +
+  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2),
+               arrow = arrow(length = unit(0.18, "cm")),
+               colour = "#888", linewidth = 0.5) +
+  geom_tile(data = nodes, aes(x = x, y = y, fill = fill),
+            width = 1.5, height = 0.85, colour = "#222") +
+  geom_text(data = nodes, aes(x = x, y = y, label = label,
+                              colour = ifelse(fill == "#222222","white","#111111")),
+            family = "Inter", size = 3.1, lineheight = 0.95) +
+  scale_fill_identity() + scale_colour_identity() +
+  coord_cartesian(xlim = c(0.1, 9.8), ylim = c(1.3, 5.7)) +
+  theme_void()
+```
+
+</div>
+:::::
+
+::: notes
+The dataset comes from Mendeley Data, published by a Spanish non-life insurer. After importing the semicolon-delimited file and fixing one cookbook inconsistency (the field labelled "age driving licence" is actually years held, which matters for any age-based pricing logic), the sandbox lands at 354,091 policy-year records over three calendar years. Missingness is small across all 47 variables, and only 49 inactive shells had to be dropped. The derived KPIs follow standard actuarial practice. Loss Ratio is the headline profitability metric, pure premium is loss per unit exposure, and a large-loss flag is set at the 99th percentile of non-zero incurred. The workflow on the right shows where each later slide sits. Univariate EDA feeds the bivariate validation, which splits into profitability and volatility tracks, and both feed the interactive layer.
+:::
+
+## Univariate Landscape, Numerical Drivers {.smaller}
+
+```{r}
+#| label: fig-num-univariate
+#| fig-width: 13
+#| fig-height: 5
+#| out-width: "100%"
+
+num_vars <- c("driver_age","vehicle_age","years_licence_held",
+              "vehicle_value","power_to_weight_ratio","total_premium")
+
+long_num <- sandbox |>
+  select(any_of(num_vars)) |>
+  tidyr::pivot_longer(everything(), names_to = "var", values_to = "value") |>
+  mutate(var = factor(var, levels = num_vars))
+
+ggplot(long_num, aes(x = value)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 40, fill = "#222222", colour = "white", alpha = 0.85) +
+  geom_density(colour = "#C8102E", linewidth = 0.7) +
+  facet_wrap(~ var, scales = "free", ncol = 6) +
+  labs(title = NULL, x = NULL, y = "Density") +
+  theme_wrc()
+```
+
+::::: two-col
+<div>
+
+**Three shape diagnostics that frame later choices**
+
+-   `driver_age` is roughly Gaussian with a mean around 49. There is **no young-driver hump**, which probably means the insurer already screens out new licensees in volume.
+-   `vehicle_age` is **bimodal** with a long right tail past 50 years. Spain has a real vintage-vehicle subculture and it is built into this book.
+-   `total_premium` and `vehicle_value` are **log-normal**, so later LR analyses need log-scale axes or portfolio-weighted ratios. Raw arithmetic means would be dominated by tiny-premium policies.
+
+</div>
+
+<div>
+
+**Why histogram plus density together?**
+
+The histogram fixes the eye on observed mass. The density overlay in [accent red]{style="color:#C8102E;font-weight:600"} shows the continuous shape without binning artefacts. When they disagree, for example the spike at exactly zero for `total_premium`, there is usually a data-quality boundary worth a closer look.
+
+</div>
+:::::
+
+::: notes
+Univariate analysis is the discipline of asking what each variable looks like on its own, before correlating it with anything else. Skipping this step is a common mistake, because every later bivariate finding is conditioned on the marginal shape of its inputs. Three takeaways drive my downstream choices. First, the absence of a young-driver mass tells me the insurer is not writing 18 to 25 year-olds in volume, so the classical U-shape in age and claims may just not be observable here. Second, vehicle_age is bimodal, meaning there are basically two books inside this book, a modern fleet and a vintage fleet, and they deserve separate treatment. Third, the right-skew in financial variables means I should avoid arithmetic-mean LRs at policy level, so portfolio-weighted ratios are used for all headline figures.
+:::
+
+## Univariate Landscape, Categorical Drivers {.smaller}
+
+```{r}
+#| label: fig-cat-univariate
+#| fig-width: 13
+#| fig-height: 5
+#| out-width: "100%"
+
+cat_vars <- c("policy_type","policy_status","business_type",
+              "payment_frequency","bonus_score","fuel_type",
+              "municipality_type","circulation_area")
+
+cat_summary <- sandbox |>
+  select(all_of(cat_vars)) |>
+  tidyr::pivot_longer(everything(), names_to = "var", values_to = "level") |>
+  count(var, level) |>
+  group_by(var) |>
+  mutate(share = n / sum(n),
+         level = forcats::fct_reorder(as.character(level), n)) |>
+  ungroup() |>
+  mutate(var = factor(var, levels = cat_vars))
+
+ggplot(cat_summary, aes(x = n, y = level)) +
+  geom_col(fill = "#222222", alpha = 0.9, width = 0.65) +
+  geom_text(aes(label = scales::percent(share, 0.1)),
+            hjust = -0.1, size = 2.6, colour = "#333") +
+  facet_wrap(~ var, scales = "free", ncol = 4) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.3)),
+                     labels = scales::label_number(scale = 1e-3, suffix = "k")) +
+  labs(x = NULL, y = NULL) +
+  theme_wrc() +
+  theme(axis.text.y = element_text(size = 7))
+```
+
+[**Three severe class imbalances** to remember in every bivariate test that follows.]{.lead}
+
+`bonus_score` is **96.5% Good**. `policy_status` is **89.2% Active**. `business_type` is **69.3% New Business**. And the most consequential surprise: **COMP-N is only 4.6% of the book, but as I show later it is the single largest profitability risk.**
+
+::: notes
+Pareto-ordering the bars by frequency turns a dull frequency table into a concentration story. Three imbalances stand out. The bonus-malus system is basically a single-class system. 96.5 percent of policy-years sit in Good, so any LR difference seen between Neutral and Bad cannot rely on volume alone, and needs formal testing. Policy status at 89.2 percent Active is normal for a steady-state book. The interesting eleven percent is the Cancelled cohort, which I show later carries a 128 percent LR. The one that matters most for this study is the policy-type distribution. CC dominates at 57.8 percent. COMP-N, the no-excess comprehensive cover, is only 4.6 percent of policy-years, yet it turns out to be the single biggest profitability problem in this book. Small does not mean safe.
+:::
+
+## Profitability. LR by Categorical Drivers {.smaller}
+
+::::: two-col
+<div>
+
+```{r}
+#| label: fig-lr-by-cat
+#| fig-width: 6.5
+#| fig-height: 6.5
+#| out-width: "100%"
+
+lr_by_cat <- function(df, var) {
+  df |>
+    group_by(level = .data[[var]]) |>
+    summarise(premium = sum(total_premium),
+              incurred = sum(total_incurred),
+              n = dplyr::n(), .groups = "drop") |>
+    mutate(LR = incurred / premium, var = var, level = as.character(level))
+}
+
+cat_for_lr <- c("policy_type","bonus_score","fuel_type","policy_status",
+                "payment_frequency","business_type")
+
+lr_panel <- purrr::map_dfr(cat_for_lr, ~lr_by_cat(sandbox, .x)) |>
+  group_by(var) |>
+  mutate(level = forcats::fct_reorder(level, LR)) |>
+  ungroup() |>
+  mutate(bar_col = ifelse(LR > portfolio_lr, "#C8102E", "#2E7D32"))
+
+ggplot(lr_panel, aes(x = LR, y = level, fill = bar_col)) +
+  geom_col(width = 0.7, alpha = 0.9) +
+  geom_vline(xintercept = portfolio_lr,
+             linetype = "dashed", colour = "#222", linewidth = 0.4) +
+  geom_text(aes(label = scales::percent(LR, 0.1)),
+            hjust = -0.1, size = 2.5, colour = "#333") +
+  scale_fill_identity() +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1),
+                     expand = expansion(mult = c(0, 0.2))) +
+  facet_wrap(~ var, scales = "free_y", ncol = 2) +
+  labs(x = "Loss Ratio (sum incurred / sum premium)", y = NULL,
+       subtitle = glue::glue("Dashed line: portfolio LR ({scales::percent(portfolio_lr, 0.1)})")) +
+  theme_wrc() +
+  theme(strip.text = element_text(face = "bold", size = 9))
+```
+
+</div>
+
+<div>
+
+**Four findings stand out**
+
+1.  **`policy_type` spans 39 pp.** TP basic at **54%** vs. COMP-N at **94%**. The single largest lever for any remediation.
+
+2.  **The bonus-malus signal is leaking.** LR is **non-monotonic**: Good 70%, then Bad 79%, then Neutral 81%. The "Neutral" pool looks like a dumping ground for borderline risks the system cannot cleanly classify.
+
+3.  **Cancelled policies bleed money.** 128% LR against 64% Active. This looks like **adverse retention**, where claimants disproportionately exit the book and leave losses behind.
+
+4.  **Diesel runs 9 pp hotter than gasoline.** A pricing or selection gap worth a re-rate study. The next slide validates it statistically.
+
+</div>
+:::::
+
+::: notes
+This is probably the most information-dense slide in the deck. Six categorical drivers, all on the same Loss Ratio axis, all benchmarked against the dashed portfolio average. The colour code is direct. Red bars are worse than the book, green bars are better. Four findings deserve attention. First, product mix dominates everything else. The 39-point spread between TP and COMP-N is more than twice as wide as any other driver. Second, the bonus-malus result is the most diagnostically interesting because it is non-monotonic. Neutral is worse than Bad, which suggests Neutral is absorbing risks that should have been classified as Bad. Third, the cancellation finding hints at adverse retention. The policyholders who cancel are disproportionately the ones who have claimed. Fourth, the 9-point diesel gap is statistically robust because of the sample size on each side.
+:::
+
+## Profitability. Statistical Validation {.smaller}
+
+```{r}
+#| label: fig-stat-policy-type
+#| fig-width: 12
+#| fig-height: 5.4
+#| out-width: "92%"
+
+set.seed(608)
+stat_sample <- sandbox |>
+  filter(total_premium > 0, loss_ratio < 5) |>
+  slice_sample(n = 50000)
+
+ggstatsplot::ggbetweenstats(
+  data = stat_sample,
+  x = policy_type, y = loss_ratio,
+  type = "nonparametric",
+  pairwise.display = "significant",
+  centrality.plotting = TRUE,
+  centrality.type = "nonparametric",
+  bf.message = FALSE,
+  ggtheme = theme_wrc(base_size = 10),
+  title = NULL,
+  xlab = NULL,
+  ylab = "Policy-level Loss Ratio"
+) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     limits = c(0, 3))
+```
+
+[**Reading the test.**]{.lead} Kruskal-Wallis confirms a highly significant between-group difference (*p* ≪ 0.001). Pairwise post-hoc Dunn's tests (only significant pairs displayed) verify that **every** policy-type pair separates, so the headline ordering on the previous slide is not just a sample-size artefact.
+
+::: notes
+A bar chart showing a 39-point Loss Ratio spread is not meaningful unless I know whether the gap is larger than what randomness would produce. The non-parametric Kruskal-Wallis test, embedded directly into the plot title by ggstatsplot, gives that audit trail. I picked non-parametric on purpose. Policy-level LR is heavily zero-inflated, because most policies have no claims, and it is right-skewed in the tail, which breaks the assumptions of a one-way ANOVA. The post-hoc Dunn pairwise tests, with only significant connections shown, confirm that every adjacent policy-type pair separates at the 0.001 level. This is the kind of visual that pairs the effect with the test in one place, which makes the result easier to defend.
+:::
+
+## Profitability. Continuous Drivers and Vehicle Heatmap {.smaller}
+
+::::: two-col
+<div>
+
+```{r}
+#| label: fig-driver-age
+#| fig-width: 6
+#| fig-height: 4.5
+#| out-width: "100%"
+
+age_lr_band <- sandbox |>
+  group_by(driver_age_band) |>
+  summarise(LR = sum(total_incurred) / sum(total_premium),
+            n = dplyr::n(), .groups = "drop") |>
+  filter(!is.na(driver_age_band))
+
+ggplot(age_lr_band, aes(x = driver_age_band, y = LR)) +
+  geom_col(fill = "#222", alpha = 0.85, width = 0.7) +
+  geom_text(aes(label = scales::percent(LR, 0.1)),
+            vjust = -0.5, size = 2.8, colour = "#333") +
+  geom_hline(yintercept = portfolio_lr,
+             linetype = "dashed", colour = "#C8102E") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     limits = c(0, max(age_lr_band$LR) * 1.2)) +
+  labs(title = "Driver age, no U-shape",
+       subtitle = "Pricing has already absorbed the age signal",
+       x = NULL, y = "LR") +
+  theme_wrc(base_size = 10)
+```
+
+**The missing U-shape is a quiet success.** A flat 67% to 73% LR across all bands means the rating engine is already loading young and old drivers correctly. Age is not where remediation lives.
+
+</div>
+
+<div>
+
+```{r}
+#| label: fig-vehicle-heat
+#| fig-width: 6
+#| fig-height: 4.5
+#| out-width: "100%"
+
+heat <- sandbox |>
+  filter(!is.na(vehicle_age_band), !is.na(veh_value_band)) |>
+  group_by(vehicle_age_band, veh_value_band) |>
+  summarise(LR = sum(total_incurred) / sum(total_premium),
+            n = dplyr::n(), .groups = "drop") |>
+  filter(n >= 100)
+
+ggplot(heat, aes(x = veh_value_band, y = vehicle_age_band, fill = LR)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_text(aes(label = scales::percent(LR, 0.1)),
+            colour = "white", fontface = "bold", size = 2.6) +
+  scale_fill_gradient(low = "#9CCC65", high = "#B71C1C",
+                      labels = scales::percent_format(accuracy = 1),
+                      name = "LR") +
+  labs(title = "Vehicle profile, where the risk concentrates",
+       subtitle = "New and expensive cells go red",
+       x = "Vehicle value", y = "Vehicle age") +
+  theme_wrc(base_size = 10) +
+  theme(panel.grid = element_blank())
+```
+
+**Risk concentrates in the upper-left:** new, expensive vehicles. The interaction is non-linear and explains why a one-dimensional vehicle-age tariff under-prices the modern luxury segment.
+
+</div>
+:::::
+
+::: notes
+Two contrasting continuous-driver stories side by side. The driver-age plot on the left is a negative finding worth celebrating. Actuarial conventional wisdom predicts a U-shape, where the youngest and oldest drivers carry the highest Loss Ratios. Instead, the profile is pretty flat, sitting between 67 and 73 percent across all bands. This is not evidence that age does not matter. It is evidence that the existing premium-rating engine is already loading age correctly, and the signal has been absorbed by the price. On the right, the two-way interaction between vehicle age and vehicle value is where there is still mispricing. The upper-left cell, new and expensive vehicles, sits well above the diagonal. A one-dimensional vehicle-age load cannot capture this interaction, and the rating table needs a value-age cross term.
+:::
+
+## Volatility. The Tail-Risk Machine {.smaller}
+
+::::: two-col
+<div>
+
+```{r}
+#| label: fig-lorenz
+#| fig-width: 6
+#| fig-height: 5.2
+#| out-width: "100%"
+
+lorenz_df <- sandbox |>
+  arrange(total_incurred) |>
+  mutate(
+    cum_pop = row_number() / dplyr::n(),
+    cum_loss = cumsum(total_incurred) / sum(total_incurred)
+  )
+
+gini <- 1 - 2 * sum((lorenz_df$cum_pop - dplyr::lag(lorenz_df$cum_pop, default = 0)) *
+                    (lorenz_df$cum_loss + dplyr::lag(lorenz_df$cum_loss, default = 0)) / 2)
+
+lorenz_plot <- lorenz_df |>
+  slice(round(seq(1, dplyr::n(), length.out = 5000)))
+
+ggplot(lorenz_plot, aes(x = cum_pop, y = cum_loss)) +
+  geom_ribbon(aes(ymin = cum_pop, ymax = cum_loss),
+              fill = "#C8102E", alpha = 0.18) +
+  geom_abline(slope = 1, intercept = 0,
+              colour = "#888", linetype = "dashed") +
+  geom_line(colour = "#222", linewidth = 1.1) +
+  annotate("text", x = 0.55, y = 0.18,
+           label = glue::glue("Gini = {round(gini, 3)}"),
+           colour = "#C8102E", fontface = "bold", size = 4.2) +
+  annotate("text", x = 0.55, y = 0.45,
+           label = "Top 1% of policies\n~ 50% of losses",
+           colour = "#222", hjust = 0, size = 3,
+           fontface = "italic") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(x = "Cumulative share of policies (sorted by loss)",
+       y = "Cumulative share of losses") +
+  theme_wrc(base_size = 10)
+```
+
+</div>
+
+<div>
+
+[**Gini = `r round(gini, 3)`**]{.lead}
+
+A Gini of 0.95 is very high by P&C standards. A typical auto book sits between 0.85 and 0.92. In plain language, **the volatility of this portfolio is basically the volatility of a few hundred policies.**
+
+**What this means for the playbook**
+
+-   Blanket re-rating cannot fix what the tail is doing.
+-   The only practical tools are **excess-of-loss reinsurance** and **per-risk underwriting limits**, targeted at the upper percentile.
+
+The deterioration in average LR is a body-of-book problem. The volatility of the book is a tail problem. Confusing the two leads to the wrong remediation.
+
+</div>
+:::::
+
+::: notes
+The Lorenz curve is a clean way to show tail concentration. Each point on the x-axis is a cumulative share of policies, sorted from cheapest claim to most expensive. The y-axis is the cumulative share of losses they account for. A diagonal line means perfect equality, and a sharp bow towards the bottom-right means a tiny minority drives most of the loss. The shaded area between the diagonal and the curve quantifies that inequality as the Gini coefficient. At 0.95, this book is well above the 0.85 to 0.92 range typical of a stable motor portfolio. The strategic point here is simple. Blanket re-rating cannot reduce volatility of this magnitude, because the volatility is driven by a few hundred policies that are statistically unforecastable from the body of the book. Only reinsurance and underwriting limits can manage it.
+:::
+
+## Volatility. Frequency vs. Severity Quadrant {.smaller}
+
+```{r}
+#| label: fig-freq-sev
+#| fig-width: 11
+#| fig-height: 5.6
+#| out-width: "85%"
+
+fs <- sandbox |>
+  filter(total_exposure > 0) |>
+  group_by(policy_type) |>
+  summarise(
+    freq      = sum(total_claims) / sum(total_exposure),
+    severity  = sum(total_incurred[total_claims > 0], na.rm = TRUE) /
+                pmax(sum(total_claims[total_claims > 0], na.rm = TRUE), 1),
+    LR        = sum(total_incurred) / sum(total_premium),
+    n         = dplyr::n(), .groups = "drop"
+  )
+
+med_f <- median(fs$freq); med_s <- median(fs$severity)
+
+ggplot(fs, aes(x = freq, y = severity)) +
+  geom_hline(yintercept = med_s, linetype = "dashed", colour = "#888") +
+  geom_vline(xintercept = med_f, linetype = "dashed", colour = "#888") +
+  geom_point(aes(size = n, fill = LR), shape = 21,
+             colour = "#222", stroke = 0.8) +
+  ggrepel::geom_text_repel(aes(label = policy_type),
+                           size = 4, fontface = "bold",
+                           colour = "#111", box.padding = 0.7,
+                           segment.colour = "#999") +
+  scale_size_continuous(range = c(8, 28), guide = "none") +
+  scale_fill_gradient(low = "#9CCC65", high = "#B71C1C",
+                      labels = scales::percent_format(accuracy = 1),
+                      name = "Loss Ratio") +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  scale_y_continuous(labels = scales::dollar_format(prefix = "€")) +
+  labs(x = "Claim frequency (claims per year of exposure)",
+       y = "Average severity (€ per claim)") +
+  theme_wrc()
+```
+
+[**Reading the quadrant.** Upper-right is "double trouble". **COMP-N** is the only type that claims more often *and* costs more per claim. **TP basic** sits in the opposite corner, the safe pocket. **CC combined** is the volume leader (biggest bubble) and anchors the portfolio's centre of gravity.]{.lead}
+
+::: notes
+The frequency and severity decomposition is the classical actuarial diagnostic, and putting it on a quadrant chart locates each policy type in a two-dimensional risk space. Bubble area is portfolio share, and bubble colour is the Loss Ratio. The chart explains the previous slide's headline finding. COMP-N is not unprofitable because of one component alone. It is unprofitable because it sits in the upper-right "double trouble" quadrant, where claims happen more often and each claim also costs more. The mechanism makes sense. COMP-N is the no-excess comprehensive product, which removes any out-of-pocket cost to the policyholder. That probably increases the propensity to claim small damages and also removes the deductible's natural cap on severity. TP, the basic third-party-only cover, sits in the safe quadrant because it caps the insurer's exposure by design.
+:::
+
+## Temporal. Diagnosing the Deterioration {.smaller}
+
+::::: two-col
+<div>
+
+```{r}
+#| label: fig-trend
+#| fig-width: 7
+#| fig-height: 5
+#| out-width: "100%"
+
+trend <- sandbox |>
+  group_by(year) |>
+  summarise(
+    LR        = sum(total_incurred) / sum(total_premium),
+    frequency = sum(total_claims) / sum(total_exposure),
+    severity  = sum(total_incurred[total_claims > 0]) /
+                pmax(sum(total_claims[total_claims > 0]), 1),
+    prem_per_exp = sum(total_premium) / sum(total_exposure),
+    pure_prem    = sum(total_incurred) / sum(total_exposure),
+    .groups = "drop"
+  ) |>
+  tidyr::pivot_longer(-year, names_to = "metric", values_to = "value") |>
+  group_by(metric) |>
+  mutate(index = value / value[year == 2022] * 100) |>
+  ungroup() |>
+  mutate(metric = factor(metric,
+    levels = c("LR","prem_per_exp","pure_prem","frequency","severity"),
+    labels = c("Loss Ratio","Premium / exposure",
+               "Pure premium / exposure","Claim frequency","Severity")))
+
+ggplot(trend, aes(x = year, y = index, colour = metric, group = metric)) +
+  geom_hline(yintercept = 100, colour = "#888", linetype = "dashed") +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 3) +
+  geom_text(data = trend |> filter(year == 2024),
+            aes(label = paste0(metric, " (", scales::number(index, 1), ")")),
+            hjust = -0.05, fontface = "bold", size = 2.8) +
+  scale_colour_manual(values = c("Loss Ratio" = "#C8102E",
+                                 "Premium / exposure" = "#1565C0",
+                                 "Pure premium / exposure" = "#FF8F00",
+                                 "Claim frequency" = "#888",
+                                 "Severity" = "#222")) +
+  scale_x_continuous(breaks = 2022:2024,
+                     limits = c(2022, 2025.5),
+                     expand = expansion(mult = c(0.02, 0))) +
+  labs(x = NULL, y = "Index (2022 = 100)", colour = NULL) +
+  theme_wrc(base_size = 9) +
+  theme(legend.position = "none")
+```
+
+</div>
+
+<div>
+
+[**The deterioration is a pricing story, not a loss-cost story.**]{.lead style="color:#C8102E"}
+
+-   **Premium per exposure** has fallen **9%** over the window. The book is being written for less money per unit of risk.
+-   **Pure premium per exposure** is net flat (+3%).
+-   **Frequency** is up 3% and **severity** is roughly flat.
+
+### Conclusion
+
+The 14-point LR climb is overwhelmingly driven by inadequate premium growth, not by claims inflation.
+
+**This re-frames the whole remediation playbook,** from "tighten claims handling" to "restore pricing discipline".
+
+</div>
+:::::
+
+::: notes
+For me this is the slide that re-wires the whole study. All five LR components are rebased to 100 in 2022, so the chart reads as "which line is doing the damage". The visual answer is unambiguous. The red Loss Ratio line is rising because the blue Premium per Exposure line is falling. Claim frequency, severity, and pure premium per exposure are basically flat over the three-year window. There is no claims-inflation crisis on this book. The crisis is in pricing. The insurer is writing 2024 risks for nine percent less premium per unit of exposure than it charged in 2022. This re-frames every conventional remediation impulse. The right answer is not to tighten claims handling, not to invest more in fraud detection, and not to renegotiate supplier panels. It is to restore pricing discipline and re-rate aggressively, especially in the COMP-N segment that just crossed 100 percent in 2024.
+:::
+
+## Bonus. Interactive Visual Analytics {.smaller}
+
+::::: two-col
+<div>
+
+**Three interaction patterns, three packages**
+
+### 1. Hover and inspect
+
+A `plotly` heatmap of LR by `policy_type x bonus_score`, faceted by year. Hover any cell to read the exact LR, exposure and incurred. Toggle the year slider to see the deterioration in motion.
+
+### 2. Linked brushing
+
+A `crosstalk` plus `plotly` scatter (premium vs. incurred) paired with a per-type LR box-plot. Drag a rectangle on the scatter and the box-plot recomputes in real time on just the brushed policies. The "see and discover" loop in one widget.
+
+### 3. Drill-down
+
+A `ggiraph` lollipop of LR by top-20 vehicle brands. Hover for tooltip, click to reveal underlying records. Static aesthetics with an interactive payload.
+
+</div>
+
+<div>
+
+```{r}
+#| label: fig-bonus-static-preview
+#| fig-width: 6.5
+#| fig-height: 5.5
+#| out-width: "100%"
+
+brand_lr <- sandbox |>
+  group_by(vehicle_brand) |>
+  summarise(n = dplyr::n(),
+            premium  = sum(total_premium),
+            incurred = sum(total_incurred),
+            LR = incurred / premium, .groups = "drop") |>
+  filter(n >= 1000) |>
+  arrange(desc(n)) |>
+  slice_head(n = 15) |>
+  mutate(brand = forcats::fct_reorder(vehicle_brand, LR),
+         above = LR > portfolio_lr)
+
+ggplot(brand_lr, aes(x = LR, y = brand)) +
+  geom_vline(xintercept = portfolio_lr, linetype = "dashed",
+             colour = "#888") +
+  geom_segment(aes(x = portfolio_lr, xend = LR, y = brand, yend = brand,
+                   colour = above), linewidth = 0.6) +
+  geom_point(aes(size = n, colour = above), alpha = 0.85) +
+  scale_colour_manual(values = c("TRUE" = "#C8102E", "FALSE" = "#2E7D32"),
+                      guide = "none") +
+  scale_size_continuous(range = c(3, 9), guide = "none") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title = "Vehicle brand LR (top 15)",
+       subtitle = "Hover-enabled in the technical report",
+       x = "Loss Ratio", y = NULL) +
+  theme_wrc(base_size = 10)
+```
+
+</div>
+:::::
+
+::: notes
+The bonus part of the study demonstrates three interaction patterns, each chosen because it solves a different analytical need. Hover and inspect is for when the reader knows what to look at but needs exact numbers. It turns a colour-encoded heatmap from approximate into precise, without breaking the overall picture. Linked brushing is probably the most useful pattern, because it lets the reader paint a region of the scatter and immediately see the marginal Loss Ratio distribution recompute live, so they can find their own subsets. Drill-down with ggiraph keeps the publication-quality look of a static ggplot figure but layers tooltips and click-to-filter behaviour on top. The static preview on this slide is the brand lollipop. The technical report renders the full interactive version, since revealjs presentations can be heavy when too many widgets are embedded.
+:::
+
+## Findings and Recommendations {.smaller}
+
+::::::::::: two-col
+<div>
+
+**Profitability**
+
+1.  **Product mix dominates.** A 39 pp LR spread, and **COMP-N crossed 100% in 2024**. Start any remediation here.
+2.  **Cancelled bleed.** 128% LR vs. 64% for Active. Investigate adverse-retention pathways.
+3.  **Bonus-malus leakage.** Neutral (81%) ranks worse than Bad (79%). The classification rule is over-inclusive.
+4.  **Diesel premium gap.** 9 pp hotter than gasoline. A re-rate study is warranted.
+
+**Volatility**
+
+5.  **Tail-risk machine.** Gini 0.95. **Top 1% of policies = \~50% of losses.** Only reinsurance can manage this.
+6.  **COMP-E carries highest CV.** Most volatile within-segment despite only the second-worst mean.
+
+</div>
+
+<div>
+
+**Next steps**
+
+::::: kpi-row
+::: {.kpi-card .accent}
+[GLM]{.kpi-value} [Re-rate on validated drivers]{.kpi-label}
+:::
+
+::: kpi-card
+[Tail]{.kpi-value} [Per-risk u/w limits + XoL]{.kpi-label}
+:::
+:::::
+
+::::: kpi-row
+::: kpi-card
+[Bonus]{.kpi-value} [Split Neutral into Neutral-Up and Down]{.kpi-label}
+:::
+
+::: {.kpi-card .success}
+[Monitor]{.kpi-value} [Quarterly Premium / Exposure KPI]{.kpi-label}
+:::
+:::::
+
+[**The one-slide takeaway**]{.lead}\
+The 14-point LR climb is a **pricing** story, not a claims story. Restore pricing discipline, contain the tail with reinsurance, and re-rate COMP-N first.
+
+</div>
+:::::::::::
+
+::: notes
+Six findings on the left, four next steps on the right, structured to flow from diagnosis to action. The first four findings sit on the profitability side, and findings five and six belong to volatility. Each of the four recommendations on the right maps back to at least one finding. A GLM re-rating directly addresses findings one through four. A tail-risk programme addresses finding five. A bonus-class redesign closes the leakage identified in finding three. And a quarterly pricing health monitor would have flagged the 2024 erosion at least six months before it showed up in the loss ratio. The one-slide takeaway in the bottom right is the conclusion the whole deck has been building towards. The headline number, a 14-point Loss Ratio climb, is a pricing problem, not a claims problem. Fixing it from the claims side would be the wrong move.
+:::
+
+# Thank You {.unnumbered background-color="#111111" style="color:white;"}
+
+:::: {style="text-align:center; margin-top:2em;"}
+[Questions?]{style="font-size:2.2em; font-family:'Oswald'; letter-spacing:0.04em;"}
+
+::: {style="margin-top:2em; color:#bbb; font-size:0.7em; letter-spacing:0.1em;"}
+MENG TINGYU · ISSS608 VISUAL ANALYTICS & APPLICATIONS<br> Full reproducible technical report available on the coursework webpage.
+:::
+::::
+
+::: notes
+Thank you for your attention. The full reproducible technical report, including all code chunks, the complete data-wrangling pipeline, every visualisation in higher resolution, and the interactive widgets in their live form, is on the Take-home Exercises tab of my coursework webpage. The repository also contains the cached analytical sandbox, so any visualisation in this deck or in the report can be re-executed without re-running the import and wrangling pipeline. Happy to take questions on any of the methodological choices, the statistical validation, the interactive layer, or the recommended remediation actions.
+:::
