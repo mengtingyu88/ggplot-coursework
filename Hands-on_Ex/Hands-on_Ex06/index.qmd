@@ -1,0 +1,828 @@
+---
+title: "Hands-on Exercise 6: Visualising and Analysing Network and Text Data"
+author: "Meng Tingyu"
+date: "2026-06-04"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Show the code"
+    code-tools: true
+    code-copy: true
+    theme: cosmo
+    fig-width: 8
+    fig-height: 6
+    fig-align: center
+    smooth-scroll: true
+execute:
+  echo: true
+  eval: true
+  warning: false
+  message: false
+  freeze: true
+editor: visual
+---
+
+# Overview
+
+This exercise is really about one idea, **relationships**. Up to now most of my charts have treated each observation as an isolated dot or bar. Here I finally get to visualise how things connect to each other.
+
+I split the work into two halves that turn out to be more similar than they first look,
+
+1.  **Network data (Part 1).** I model two weeks of email traffic inside a company and study who talks to whom. The objects are people, and the connections are emails.
+2.  **Text data (Part 2).** I take a collection of newsgroup messages and study how words and documents relate. The objects are words and documents, and the connections come from co-occurrence and correlation.
+
+The payoff is that both halves end up as the same kind of structure, a **graph**, and both lean on the same plotting engine, `ggraph`. So learning the network grammar once pays off twice.
+
+::: callout-tip
+## The workflow I keep reusing
+
+For every visualisation in this course I follow the same loop, install packages, import data, wrangle into the right shape, build a basic version, then enhance and (where it helps) make it interactive. Networks add one extra mental step at the start, I have to decide what counts as a node and what counts as an edge before any plotting can begin.
+:::
+
+::: callout-important
+## Data I need before rendering
+
+This page reads from a `data/` subfolder. To reproduce everything I made sure the following exist.
+
+**Part 1 (network):**
+
+-   `data/GAStech_email_node.csv`
+-   `data/GAStech_email_edge-v2.csv`
+
+**Part 2 (text):**
+
+-   `data/20news/` (a folder of newsgroup subfolders, each containing the raw message files)
+-   `data/rds/` (a folder for caching the combined text frame with `write_rds()`, created automatically if missing)
+:::
+
+------------------------------------------------------------------------
+
+# Getting Started
+
+I load every package for both halves up front. The first block of packages is for the network half, the second block is for the text half. A few packages such as `igraph`, `tidygraph` and `ggraph` actually serve both, which already hints at how connected the two topics are.
+
+```{r}
+pacman::p_load(igraph, tidygraph, ggraph,
+               visNetwork, lubridate, clock,
+               tidyverse, graphlayouts,
+               concaveman, ggforce,
+               tidytext, widyr, wordcloud,
+               ggwordcloud, textplot, DT, hms)
+```
+
+::: callout-note
+## My takeaway on package roles
+
+It helped me to group the packages by job rather than memorise them flat. `tidygraph` is for *holding and manipulating* a graph in a tidy way, `ggraph` is for *drawing* it, `igraph` is the engine underneath both, and `visNetwork` is for *interactive* output. On the text side `tidytext` does the tokenising and TF-IDF, while `widyr` lets me jump into a wide matrix to compute correlations and then come back to tidy form.
+:::
+
+------------------------------------------------------------------------
+
+# Part 1: Modelling and Visualising Network Data
+
+## The data
+
+The data set comes from an oil exploration company called GAStech. There are two files. The edges file records roughly 9,000 individual emails exchanged between 55 employees over two weeks. The nodes file lists each of those 55 employees with their name, department and job title.
+
+The split into nodes and edges is itself the first lesson, a network is never one table, it is always two. One table answers "who exists" and the other answers "who is connected".
+
+## Importing the data
+
+```{r}
+GAStech_nodes <- read_csv("data/GAStech_email_node.csv")
+GAStech_edges <- read_csv("data/GAStech_email_edge-v2.csv")
+```
+
+## Reviewing and wrangling time
+
+Before trusting any field I glimpse the edges to check the types.
+
+```{r}
+glimpse(GAStech_edges)
+```
+
+::: callout-warning
+## The trap I almost walked into
+
+`SentDate` came in as a character string, not a date. If I had grouped or sorted by it without noticing, R would have treated dates alphabetically rather than chronologically, which silently breaks any time based analysis. Checking data types right after import is now a habit, not an afterthought.
+:::
+
+I convert the date and derive the weekday. One small decision I made on purpose, I compute the weekday from the parsed `SendDate` column rather than from the raw character, so I am always working from a true date object.
+
+```{r}
+GAStech_edges <- GAStech_edges %>%
+  mutate(SendDate = dmy(SentDate)) %>%
+  mutate(Weekday = wday(SendDate,
+                        label = TRUE,
+                        abbr = FALSE))
+```
+
+Here `dmy()` reads the string as day, month, year and returns a real date, while `wday()` returns the weekday as an ordered factor. Keeping it ordered matters because Monday should sort before Friday, not alphabetically.
+
+## Aggregating the edges
+
+The raw edges file has one row per email, which is far too granular to plot. Thousands of overlapping lines would be unreadable. So I aggregate, for each sender, receiver and weekday I count how many work related emails passed between them, and I keep only meaningful pairs.
+
+```{r}
+GAStech_edges_aggregated <- GAStech_edges %>%
+  filter(MainSubject == "Work related") %>%
+  group_by(source, target, Weekday) %>%
+    summarise(Weight = n()) %>%
+  filter(source != target) %>%
+  filter(Weight > 1) %>%
+  ungroup()
+```
+
+Three of these filters reflect deliberate analytical choices, not just cleaning. `source != target` removes self emails, `Weight > 1` drops one off contacts so only repeated relationships survive, and the `MainSubject` filter keeps the analysis focused on work communication.
+
+## Building the tidygraph object
+
+`tbl_graph()` stitches the two tables into a single graph object that still behaves like tidy data. I set `directed = TRUE` because an email has a clear direction from sender to receiver.
+
+```{r}
+GAStech_graph <- tbl_graph(nodes = GAStech_nodes,
+                           edges = GAStech_edges_aggregated,
+                           directed = TRUE)
+GAStech_graph
+```
+
+The printout shows two tibbles in one object, with the node table marked as active. This active idea is the clever part of `tidygraph`, at any moment only one table is in focus, and `activate()` lets me switch between them.
+
+```{r}
+GAStech_graph %>%
+  activate(edges) %>%
+  arrange(desc(Weight))
+```
+
+::: callout-note
+## My takeaway on tidygraph
+
+The thing that finally made networks click for me was realising I do not need a new mental model for the data. A graph is just two `dplyr` friendly tables that know about each other. `activate(nodes)` or `activate(edges)` decides which one my verbs act on, and `.N()`, `.E()` and `.G()` let me reach across when I am working in the other table.
+:::
+
+## Plotting static network graphs with ggraph
+
+`ggraph` is an extension of `ggplot2`, so the layered grammar I already know carries straight over. Every network graph has three moving parts, the **nodes**, the **edges** and the **layout** that decides where everything sits.
+
+I start with the bare minimum, draw the edges as straight links and the nodes as points.
+
+```{r}
+#| fig-cap: "A first, deliberately plain network graph"
+ggraph(GAStech_graph) +
+  geom_edge_link() +
+  geom_node_point()
+```
+
+The default `ggplot2` theme keeps axes and gridlines, which make no sense for a network. `theme_graph()` strips all of that away.
+
+```{r}
+g <- ggraph(GAStech_graph) +
+  geom_edge_link(aes()) +
+  geom_node_point(aes())
+
+g + theme_graph()
+```
+
+The layout is where networks differ most from ordinary charts, because there is no natural x and y. `ggraph` offers many algorithms. I use Fruchterman and Reingold (`fr`), a force directed layout that pushes connected nodes together and unconnected ones apart.
+
+```{r}
+g <- ggraph(GAStech_graph,
+            layout = "fr") +
+  geom_edge_link(aes()) +
+  geom_node_point(aes())
+
+g + theme_graph()
+```
+
+A plain web of dots is hard to read, so I start mapping attributes to aesthetics. Colouring each node by department immediately reveals structure.
+
+```{r}
+g <- ggraph(GAStech_graph,
+            layout = "nicely") +
+  geom_edge_link(aes()) +
+  geom_node_point(aes(colour = Department,
+                      size = 3))
+
+g + theme_graph()
+```
+
+Next I let the edges carry information too. Mapping line width to `Weight` shows which relationships are heavy, and a low `alpha` stops dense areas from turning into a solid blob.
+
+```{r}
+g <- ggraph(GAStech_graph,
+            layout = "nicely") +
+  geom_edge_link(aes(width = Weight),
+                 alpha = 0.2) +
+  scale_edge_width(range = c(0.1, 5)) +
+  geom_node_point(aes(colour = Department),
+                  size = 3)
+
+g + theme_graph()
+```
+
+::: callout-note
+## My takeaway on the grammar carrying over
+
+This is the moment I appreciated learning the grammar of graphics properly in earlier exercises. Mapping `Department` to colour and `Weight` to width is exactly the same `aes()` thinking as before. The only new vocabulary is `geom_edge_*` and `geom_node_*` plus the dedicated `scale_edge_width()`.
+:::
+
+## Faceting a network
+
+Faceting is the network equivalent of small multiples, and it is genuinely useful here because it spreads a tangled graph across panels and reduces over plotting. `ggraph` gives three faceting verbs, and the difference between them is subtle but important.
+
+Using `facet_edges()` I split by weekday. Nodes appear in every panel, but an edge only shows up in the panel of the day it belongs to.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+set_graph_style()
+
+g <- ggraph(GAStech_graph,
+            layout = "nicely") +
+  geom_edge_link(aes(width = Weight),
+                 alpha = 0.2) +
+  scale_edge_width(range = c(0.1, 5)) +
+  geom_node_point(aes(colour = Department),
+                  size = 2) +
+  theme(legend.position = "bottom")
+
+g + facet_edges(~Weekday)
+```
+
+Adding a frame around each panel makes the small multiples easier to read as separate units.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+g + facet_edges(~Weekday) +
+  th_foreground(foreground = "grey80",
+                border = TRUE)
+```
+
+Now `facet_nodes()`, which behaves differently. An edge is drawn only if both of its endpoints live in the same panel, so this view answers a different question, how does each department communicate internally.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+g + facet_nodes(~Department) +
+  th_foreground(foreground = "grey80",
+                border = TRUE)
+```
+
+::: callout-warning
+## The distinction that confused me at first
+
+`facet_edges()` and `facet_nodes()` look almost identical in code but answer opposite questions. With `facet_edges()` I am slicing the *connections* by an edge attribute. With `facet_nodes()` I am slicing the *actors* and only keeping edges that stay inside a panel. Reading the panels wrongly would lead to completely wrong conclusions, so I now say the question out loud before choosing.
+:::
+
+## Network metrics analysis
+
+Visual structure is suggestive, but I want numbers to back it up. Centrality measures rank how important each actor is to the network. There are several flavours, and here I use **betweenness centrality**, which is high for actors who sit on many shortest paths between others, in other words the brokers and bridges.
+
+A nice feature from `ggraph` version 2 onward is that I can call a `tidygraph` algorithm directly inside `aes()` without precomputing it.
+
+```{r}
+#| fig-cap: "Node size mapped to betweenness centrality"
+g <- GAStech_graph %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(width = Weight),
+                 alpha = 0.2) +
+  scale_edge_width(range = c(0.1, 5)) +
+  geom_node_point(aes(colour = Department,
+                      size = centrality_betweenness()))
+
+g + theme_graph()
+```
+
+## Visualising community
+
+Beyond ranking individuals, I can ask whether the network breaks into natural groups. Community detection algorithms do exactly that. `tidygraph` inherits many from `igraph`, such as edge betweenness, Louvain, walktrap and label propagation. I start with edge betweenness.
+
+```{r}
+#| fig-cap: "Communities detected by edge betweenness"
+g <- GAStech_graph %>%
+  mutate(community = as.factor(
+    group_edge_betweenness(
+      weights = Weight,
+      directed = TRUE))) %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(
+    aes(width = Weight),
+    alpha = 0.2) +
+  scale_edge_width(
+    range = c(0.1, 5)) +
+  geom_node_point(
+    aes(colour = community))
+
+g + theme_graph()
+```
+
+Colour alone leaves the group boundaries fuzzy, so I draw a hull around each community using `geom_mark_hull()` from `ggforce`. Community detection usually ignores edge direction, so I convert the graph to undirected just for this step, then detect communities with `group_louvain()` and bring back betweenness to size the nodes.
+
+```{r}
+#| fig-cap: "Communities outlined with convex hulls, node size by betweenness"
+g <- GAStech_graph %>%
+  activate(nodes) %>%
+  convert(to_undirected) %>%
+  mutate(community = as.factor(
+    group_louvain(weights = Weight)),
+         betweenness_measure = centrality_betweenness()) %>%
+  ggraph(layout = "fr") +
+  geom_mark_hull(
+    aes(x, y,
+        group = community,
+        fill = community),
+    alpha = 0.2,
+    expand = unit(0.3, "cm"),
+    radius = unit(0.3, "cm")
+  ) +
+  geom_edge_link(aes(width = Weight),
+                 alpha = 0.2) +
+  scale_edge_width(range = c(0.1, 5)) +
+  geom_node_point(aes(fill = Department,
+                      size = betweenness_measure),
+                      color = "black",
+                      shape = 21)
+
+g + theme_graph()
+```
+
+::: callout-note
+## My takeaway on metrics versus communities
+
+These two ideas answer different questions and I try not to conflate them. Centrality is about *individual* importance, who the brokers are. Community detection is about *group* structure, which clusters naturally hold together. The hull plot is my favourite output of Part 1 because it layers both at once: the fill shows the groups, and the node size shows the brokers inside and between them.
+:::
+
+::: callout-warning
+## A practical note on the community algorithm
+
+Louvain is fast and stable, but it only works on undirected graphs, which is why I added `convert(to_undirected)` above. An exact alternative is `group_optimal()`, but it depends on the GLPK library and can hang on a bigger graph, so for a directed email network the convert plus Louvain combination is the safer choice.
+:::
+
+## Building an interactive network with visNetwork
+
+Static graphs are great for a report, but a network is something I genuinely want to poke at. `visNetwork` builds an interactive graph on top of the `vis.js` library, where I can drag nodes, zoom, and highlight neighbours.
+
+It expects its own column names, so first I rebuild the aggregated edges with `from` and `to` id columns by joining the labels back to the node ids.
+
+```{r}
+GAStech_edges_aggregated <- GAStech_edges %>%
+  left_join(GAStech_nodes, by = c("sourceLabel" = "label")) %>%
+  rename(from = id) %>%
+  left_join(GAStech_nodes, by = c("targetLabel" = "label")) %>%
+  rename(to = id) %>%
+  filter(MainSubject == "Work related") %>%
+  group_by(from, to) %>%
+    summarise(weight = n()) %>%
+  filter(from != to) %>%
+  filter(weight > 1) %>%
+  ungroup()
+```
+
+The first interactive graph needs nothing more than the two tables.
+
+```{r}
+visNetwork(GAStech_nodes,
+           GAStech_edges_aggregated)
+```
+
+I apply the familiar Fruchterman and Reingold layout, this time through `igraph`.
+
+```{r}
+visNetwork(GAStech_nodes,
+           GAStech_edges_aggregated) %>%
+  visIgraphLayout(layout = "layout_with_fr")
+```
+
+`visNetwork` automatically colours nodes by a column called `group`, so I rename `Department` to `group` to get a coloured, legible graph.
+
+```{r}
+GAStech_nodes <- GAStech_nodes %>%
+  rename(group = Department)
+```
+
+```{r}
+visNetwork(GAStech_nodes,
+           GAStech_edges_aggregated) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visLegend() %>%
+  visLayout(randomSeed = 123)
+```
+
+Because the graph is directed, I add arrowheads and a gentle curve to the edges.
+
+```{r}
+visNetwork(GAStech_nodes,
+           GAStech_edges_aggregated) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visEdges(arrows = "to",
+           smooth = list(enabled = TRUE,
+                         type = "curvedCW")) %>%
+  visLegend() %>%
+  visLayout(randomSeed = 123)
+```
+
+Finally the part that makes it feel alive. `visOptions()` lets me highlight a node's neighbours on click and adds a dropdown to jump straight to any person.
+
+```{r}
+visNetwork(GAStech_nodes,
+           GAStech_edges_aggregated) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visOptions(highlightNearest = TRUE,
+             nodesIdSelection = TRUE) %>%
+  visLegend() %>%
+  visLayout(randomSeed = 123)
+```
+
+::: callout-note
+## My takeaway on static versus interactive
+
+I now think of these as serving different readers. The `ggraph` versions are for a fixed narrative where I have already decided what matters and want to point at it. `visNetwork` is for an open ended audience who want to explore for themselves, click a name, and see who that person is connected to. One is a finished argument, the other is a tool for asking questions.
+:::
+
+------------------------------------------------------------------------
+
+# Part 2: Visualising and Analysing Text Data
+
+Part 1 handed me a network on a plate, already split into nodes and edges. Text is messier. It arrives as unstructured paragraphs, and a big part of the job is turning that mess into something tidy enough to count, compare and eventually connect. The framework I use for this is **tidytext**, which applies the same one observation per row philosophy to words.
+
+## The tidytext idea
+
+The central rule of tidytext is one token per row, where a token is usually a single word. Once text is in that shape, all the `dplyr`, `tidyr` and `ggplot2` skills I already have apply directly. There is no separate text mining universe to learn, just a reshaping step at the front.
+
+## Importing many files from many folders
+
+The data is the classic 20 Newsgroups collection, many message files spread across folders, one folder per newsgroup. Reading them by hand is hopeless, so I write a small function that reads every file in one folder into a tidy frame.
+
+```{r}
+news20 <- "data/20news/"
+```
+
+```{r}
+read_folder <- function(infolder) {
+  tibble(file = dir(infolder,
+                    full.names = TRUE)) %>%
+    mutate(text = map(file,
+                      read_lines)) %>%
+    transmute(id = basename(file),
+              text) %>%
+    unnest(text)
+}
+```
+
+Then I map that function over every folder, so a single pipeline ingests the entire corpus and labels each line with its newsgroup and message id. I cache the result so I do not have to repeat the slow read.
+
+```{r}
+dir.create("data/rds", showWarnings = FALSE, recursive = TRUE)
+
+raw_text <- tibble(folder =
+                     dir(news20,
+                         full.names = TRUE)) %>%
+  mutate(folder_out = map(folder,
+                          read_folder)) %>%
+  unnest(cols = c(folder_out)) %>%
+  transmute(newsgroup = basename(folder),
+            id, text)
+
+write_rds(raw_text, "data/rds/news20.rds")
+```
+
+::: callout-note
+## My takeaway on map and unnest
+
+This little pipeline taught me more about functional programming than the network half did. `map()` applies my `read_folder` function to each folder and stores a whole data frame inside a list column, then `unnest()` flattens those frames back into ordinary rows. Writing one function and mapping it beats copying read code dozens of times, and it scales to any number of folders without edits.
+:::
+
+## Initial exploration
+
+Before any cleaning I check the balance of the corpus by counting distinct messages per newsgroup.
+
+```{r}
+#| fig-cap: "Number of messages per newsgroup"
+raw_text %>%
+  group_by(newsgroup) %>%
+  summarize(messages = n_distinct(id)) %>%
+  ggplot(aes(messages, newsgroup)) +
+  geom_col(fill = "lightblue") +
+  labs(y = NULL)
+```
+
+## Cleaning the text
+
+Raw messages carry a lot of noise that would pollute any word count, headers, automated signatures, and quoted text from earlier messages. I remove them in two passes.
+
+First I drop everything before the first blank line, which strips the header block, and I cut off anything after a signature line that starts with two dashes.
+
+```{r}
+cleaned_text <- raw_text %>%
+  group_by(newsgroup, id) %>%
+  filter(cumsum(text == "") > 0,
+         cumsum(str_detect(
+           text, "^--")) == 0) %>%
+  ungroup()
+```
+
+Second I remove quoted lines, the ones that repeat what someone else wrote, using a few regular expressions.
+
+```{r}
+cleaned_text <- cleaned_text %>%
+  filter(str_detect(text, "^[^>]+[A-Za-z\\d]")
+         | text == "",
+         !str_detect(text,
+                     "writes(:|\\.\\.\\.)$"),
+         !str_detect(text,
+                     "^In article <")
+  )
+```
+
+::: callout-warning
+## Cleaning is an analytical choice, not housekeeping
+
+It is tempting to treat this as boring preprocessing, but every filter here shapes the conclusions. If I had left the headers in, words like "subject" and "from" would dominate every count and tell me nothing. If I had left quoted text in, popular opinions would be double counted because they get quoted back. Garbage in really does mean garbage out for text.
+:::
+
+## Tokenising and removing stop words
+
+Now the key tidytext step. `unnest_tokens()` breaks each line into one word per row, and I then drop common stop words and anything that is not a clean word.
+
+```{r}
+usenet_words <- cleaned_text %>%
+  unnest_tokens(word, text) %>%
+  filter(str_detect(word, "[a-z']$"),
+         !word %in% stop_words$word)
+```
+
+With clean tokens I can finally count the most common words across the whole corpus.
+
+```{r}
+usenet_words %>%
+  count(word, sort = TRUE)
+```
+
+More useful for comparison is counting words within each newsgroup.
+
+```{r}
+words_by_newsgroup <- usenet_words %>%
+  count(newsgroup, word, sort = TRUE) %>%
+  ungroup()
+```
+
+## Visualising words with word clouds
+
+A word cloud is a quick, intuitive way to see prominence, where size encodes frequency. The base `wordcloud` package gives a fast static version.
+
+```{r}
+#| fig-cap: "Word cloud of the corpus, size by frequency"
+wordcloud(words_by_newsgroup$word,
+          words_by_newsgroup$n,
+          max.words = 300)
+```
+
+A word cloud is good for a first impression but bad for reading exact values, so I pair it with an interactive `DT` table that lets me search and sort the actual numbers.
+
+```{r}
+words_by_newsgroup %>%
+  slice_max(n, n = 500) %>%
+  DT::datatable(filter = "top",
+                options = list(pageLength = 10,
+                               scrollX = TRUE))
+```
+
+I can also build the cloud inside `ggplot2` with `ggwordcloud`, which means I get faceting for free and can show one small cloud per newsgroup. To keep the no overlap layout fast and readable, I limit each newsgroup to its top words rather than trying to place every term.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 9
+#| fig-cap: "Per newsgroup word clouds with ggwordcloud (top words per group)"
+set.seed(1234)
+
+words_by_newsgroup %>%
+  group_by(newsgroup) %>%
+  slice_max(n, n = 30, with_ties = FALSE) %>%
+  ungroup() %>%
+  ggplot(aes(label = word,
+             size = n)) +
+  geom_text_wordcloud(rm_outside = TRUE) +
+  scale_size_area(max_size = 6) +
+  theme_minimal() +
+  facet_wrap(~newsgroup)
+```
+
+::: callout-note
+## My takeaway on word clouds
+
+I used to think word clouds were just decoration, and honestly for precise reading they are weak. But as a first glance they are excellent, and pairing one with a searchable table covers both needs: the cloud for the gist, the table for the truth. The faceted `ggwordcloud` version is the one I would actually keep, because comparing clouds side by side says far more than one giant cloud. Capping each panel at its top words also keeps the layout from grinding to a halt, which I learned the hard way.
+:::
+
+## Basic concept of TF-IDF
+
+Plain frequency has a flaw, common words like "people" or "time" top every newsgroup and so distinguish none of them. **TF-IDF**, short for term frequency to inverse document frequency, fixes this by rewarding words that are frequent in one document but rare across the rest. A high TF-IDF word is therefore a word that is *characteristic* of a particular newsgroup.
+
+`bind_tf_idf()` computes all three quantities and binds them to the data.
+
+```{r}
+tf_idf <- words_by_newsgroup %>%
+  bind_tf_idf(word, newsgroup, n) %>%
+  arrange(desc(tf_idf))
+```
+
+I present the result as an interactive table with rounded numbers and tighter rows.
+
+```{r}
+tf_idf %>%
+  slice_max(tf_idf, n = 500) %>%
+  DT::datatable(filter = "top",
+                options = list(pageLength = 10,
+                               scrollX = TRUE)) %>%
+  formatRound(columns = c("tf", "idf",
+                          "tf_idf"),
+              digits = 3) %>%
+  formatStyle(0,
+              target = "row",
+              lineHeight = "25%")
+```
+
+To see the payoff visually I use faceted bar charts of the top TF-IDF words for the science related newsgroups. The distinguishing vocabulary of each group jumps out.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+#| fig-cap: "Top TF-IDF words in the science newsgroups"
+tf_idf %>%
+  filter(str_detect(newsgroup, "^sci\\.")) %>%
+  group_by(newsgroup) %>%
+  slice_max(tf_idf,
+            n = 12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word,
+                        tf_idf)) %>%
+  ggplot(aes(tf_idf,
+             word,
+             fill = newsgroup)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ newsgroup,
+             scales = "free") +
+  labs(x = "tf-idf",
+       y = NULL)
+```
+
+::: callout-note
+## My takeaway on why TF-IDF beats raw counts
+
+This was the most useful concept in Part 2. Raw frequency tells me what is *common*, TF-IDF tells me what is *distinctive*, and distinctive is almost always what I actually want when comparing groups. Setting `scales = "free"` in the facet is a small but important detail, because each newsgroup has its own range and a shared axis would flatten the smaller ones into nothing.
+:::
+
+## From words to a network: correlations between newsgroups
+
+Here the two halves of this exercise finally meet. I can treat the newsgroups as nodes and connect ones that share similar vocabulary, turning a text problem back into a network problem. `widyr` makes this clean: it casts the tidy data into a wide matrix, computes pairwise correlations, then returns tidy output. I keep only words seen a handful of times so the correlation rests on real signal rather than noise.
+
+```{r}
+newsgroup_cors <- words_by_newsgroup %>%
+  filter(n >= 5) %>%
+  pairwise_cor(newsgroup,
+               word,
+               n,
+               sort = TRUE)
+```
+
+Now I draw the correlations as a network with `ggraph`, exactly the engine from Part 1, keeping only reasonably strong links.
+
+```{r}
+#| fig-cap: "Newsgroups connected by shared vocabulary"
+set.seed(2017)
+
+newsgroup_cors %>%
+  filter(correlation > .025) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(alpha = correlation,
+                     width = correlation)) +
+  geom_node_point(size = 6,
+                  color = "lightblue") +
+  geom_node_text(aes(label = name),
+                 color = "red",
+                 repel = TRUE) +
+  theme_void()
+```
+
+::: callout-tip
+## The moment Part 1 and Part 2 connected
+
+This plot is the whole point of putting both topics in one exercise. Nothing in the `ggraph` call is new, I reused everything from the email network, yet the underlying data is text. Realising that documents related by shared words *are* a network was the single most satisfying idea in this exercise.
+:::
+
+## Bigrams: relationships between words
+
+So far I treated words as independent. But meaning lives in word order, so I now look at **bigrams**, pairs of consecutive words. `unnest_tokens()` handles this with a token type of ngrams.
+
+```{r}
+bigrams <- cleaned_text %>%
+  unnest_tokens(bigram,
+                text,
+                token = "ngrams",
+                n = 2)
+```
+
+A first count is dominated by uninformative pairs like "of the", which is expected.
+
+```{r}
+bigrams_count <- bigrams %>%
+  filter(!is.na(bigram)) %>%
+  count(bigram, sort = TRUE)
+
+bigrams_count
+```
+
+To get meaningful pairs I split each bigram into two columns and remove any pair containing a stop word.
+
+```{r}
+bigrams_separated <- bigrams %>%
+  filter(!is.na(bigram)) %>%
+  separate(bigram, c("word1", "word2"),
+           sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+
+bigrams_filtered
+```
+
+Then I recount the cleaned word pairs.
+
+```{r}
+bigram_counts <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE)
+```
+
+## A network of bigrams
+
+A bigram is itself a tiny directed edge from one word to the next, so the natural way to see them is a graph. I build it with `graph_from_data_frame()` from `igraph`, keeping only pairs that appear more than three times.
+
+```{r}
+bigram_graph <- bigram_counts %>%
+  filter(n > 3) %>%
+  graph_from_data_frame()
+
+bigram_graph
+```
+
+A first plot shows the structure.
+
+```{r}
+#| fig-cap: "A first bigram network"
+set.seed(1234)
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name),
+                 vjust = 1,
+                 hjust = 1)
+```
+
+I then polish it, arrowheads show reading direction, edge transparency encodes how often the pair occurs, and `theme_void()` clears the background so the words stand out.
+
+```{r}
+#| fig-cap: "Bigram network with direction and frequency encoded"
+set.seed(1234)
+
+a <- grid::arrow(type = "closed",
+                 length = unit(.15,
+                               "inches"))
+
+ggraph(bigram_graph,
+       layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n),
+                 show.legend = FALSE,
+                 arrow = a,
+                 end_cap = circle(.07,
+                                  "inches")) +
+  geom_node_point(color = "lightblue",
+                  size = 5) +
+  geom_node_text(aes(label = name),
+                 vjust = 1,
+                 hjust = 1) +
+  theme_void()
+```
+
+::: callout-note
+## My takeaway on bigram networks
+
+Seeing words drawn as a directed graph made an abstract idea concrete, language has structure, and that structure is a network. A chain like one word arrowing into the next is just an edge, which means the same betweenness and community tools from Part 1 could in principle run on words too. That symmetry is the lesson I am taking away from the whole exercise.
+:::
+
+------------------------------------------------------------------------
+
+# Reflection
+
+Going in, network analysis and text analysis felt like two unrelated chapters that happened to land in the same week. Coming out, I see them as two doors into the same room.
+
+A few things stuck with me. First, **the hard part of network work happens before any plotting**, in deciding what a node is, what an edge is, and how to aggregate raw events into meaningful relationships. Second, **the grammar of graphics really does generalise**, once `aes()` mapping became second nature, switching from a scatterplot to `ggraph` cost almost nothing. Third, and most memorable, **text becomes a network the moment you ask how things relate**, whether that is documents sharing vocabulary or words following one another.
+
+If I were to extend this, I would compute centrality on the bigram network to find pivotal words, and I would run community detection on the newsgroup correlation graph to confirm whether the science groups really cluster the way the TF-IDF charts suggested. Both would reuse tools I already practised here, which is exactly the kind of compounding I hoped this course would build.
