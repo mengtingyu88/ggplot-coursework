@@ -28,6 +28,8 @@ website:
             text: "Take-home Ex 1 · Technical Report"
           - href: Take-home_Ex/Take-home_Ex01/exec_summary.qmd
             text: "Take-home Ex 1 · Executive Summary"
+          - href: Take-home_Ex/Take-home_Ex02/index.qmd
+            text: "Take-home Ex 2 · Anatomy of a Broken Embargo"
       - about.qmd
 
 format:

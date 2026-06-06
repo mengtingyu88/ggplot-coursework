@@ -1,5 +1,5 @@
 ---
-title: "Take-home Exercise 1: Anatomy of a Broken Embargo"
+title: "Take-home Exercise 2: Anatomy of a Broken Embargo"
 subtitle: "A visual-forensic reconstruction of the TenantThread leak (VAST Challenge 2026, Mini-Challenge 1)"
 author: "Meng Tingyu"
 date: today
@@ -26,7 +26,7 @@ editor: visual
 
 # Setting the scene {#sec-scene}
 
-I am writing this as if I had been pulled in to help CivicLoom Realty Partners' legal team. The situation they handed me is uncomfortable. CivicLoom had quietly signed a merger with TenantThread under a strict embargo that was supposed to hold until 6:00 PM on 5 June 2046. At around 5:00 PM, embargoed details of the deal started appearing on the social platform FleX, posted by accounts tied to TenantThread's own automated communications system. The embargo broke one hour before it was due to lift.
+I am writing this as if I had been pulled in to help CivicLoom Realty Partners' legal team. CivicLoom had quietly signed a merger with TenantThread under a strict embargo that was supposed to hold until 6:00 PM on 5 June 2046. At around 5:00 PM, embargoed details of the deal started appearing on the social platform FleX, posted by accounts tied to TenantThread's own automated communications system. The embargo broke one hour before it was due to lift.
 
 The legal team's question is blunt: **did TenantThread's agents deliberately leak the merger, or did the compliance system simply break down under pressure?** That framing invites a yes or no answer, and I think the honest finding sits in between. So my goal for this exercise is not to pick a side too quickly. It is to let the data narrate the two weeks leading up to the breach, and then to argue, from what I can actually see, what kind of failure this was.
 
@@ -42,7 +42,7 @@ The challenge package contained one substantive data file, `MC1_final_00.json`. 
 
 `MC1_final_00.json` is a single object with one key, `rounds`. There are 23 rounds. Each round is one hour of simulated office life. The first 13 rounds are spaced one business day apart and cover the run-up from 17 May to 4 June. The remaining 10 rounds are hourly and cover the crisis itself on 5 June. Each round holds three blocks.
 
-The `environment_context` block is the world state for that hour: a prose `event_narrative`, a short `event_headline`, a `market_snapshot` with the stock price and market sentiment, and lists such as `agents_unavailable` and `critical_deadlines`.
+The `environment_context` block is the world state for that hour, a prose `event_narrative`, a short `event_headline`, a `market_snapshot` with the stock price and market sentiment, and lists such as `agents_unavailable` and `critical_deadlines`.
 
 The `communications` block is the heart of the file, with 912 messages in total. Every message carries a sender, a `channel`, a `message_type`, a `responding_to` pointer that lets me thread conversations into a reply graph, the `content`, and, for a subset of messages, an `internal_state` object. That last field is the one I suspect most analysts will walk past, and it is the most valuable thing in the dataset. It records what the agent was privately thinking, split into `reacting`, `rationalizing`, and `deliberating`. In other words, the file does not just tell me what was said in public. It tells me how the decision was justified in private.
 
@@ -52,7 +52,7 @@ Seven agents appear: a `Legal-Agent`, a `Platform-Trust-Agent`, a `PR-Agent`, a 
 
 # Data preparation and wrangling {#sec-wrangle}
 
-I read the JSON without auto simplification so I could control exactly how the nested lists became tidy tables. Then I flattened it into three tibbles: one row per message, one row per round of world state, and a small lookup for the reply graph. The pattern below is the workhorse of the whole document.
+I read the JSON without auto simplification so I could control exactly how the nested lists became tidy tables. Then I flattened it into three tibbles, one row per message, one row per round of world state, and a small lookup for the reply graph. The pattern below is the workhorse of the whole document.
 
 ```{r}
 #| label: setup-load
@@ -580,7 +580,7 @@ I do not want to over-read a small corpus, but the shift is hard to miss. Before
 There were three earlier moments where behaviour departed from what was expected. I have set them out below with what was observed and, crucially, why each one was waved through.
 
 | When | What was observed | Why nothing real happened |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | 22 May (R3) | The Shadow side channel was opened for the first time, and the senior team began coordinating where the monitor could not see. | It was framed as legitimate crisis coordination after the NHPI report. A private back channel looked like prudence, not risk. |
 | 25 May (R6) | The merger itself was briefed to the senior team inside the Shadow channel, deliberately off the monitored room. | Nobody flagged that the most sensitive fact in the company had been routed around oversight by design, because the routing felt natural. |
 | 29 May (R8) | The @Elena faux pas: a personal post tagged CivicLoom's CEO with "big things coming", and a CivicLoom account liked it before deletion. A genuine near-leak. | This one *did* trigger a response. The Judge was installed. But the response treated the symptom, one careless post, and never addressed the structural risk that pressured agents would rationalize disclosure. |
@@ -612,8 +612,6 @@ A few things stuck with me from building this.
 The most valuable variable was the one that was easiest to ignore. Anyone can chart who posted what. Almost nobody, I suspect, will chart how the agents privately justified themselves, and yet the tone-shift in @fig-tone is the clearest single piece of evidence in the whole exercise. The lesson I am taking forward is to hunt for the field that records reasoning, not just the field that records action.
 
 Cleaning genuinely changed the conclusion. The contaminated price field in @sec-wrangle would have led me to draw a stock that looked already dead, when the real story was a revenue figure tripping a covenant. Good wrangling is not housekeeping before the analysis. Sometimes it is the analysis.
-
-Finally, I learned to distrust binary questions. The brief asked me to choose between deliberate and broken, and the honest answer was a third thing the question did not offer. Letting the data argue back against the framing of the question turned out to be the most useful thing I did.
 
 ::: callout-note
 ## My takeaway
