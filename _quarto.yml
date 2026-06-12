@@ -22,6 +22,8 @@ website:
             text: "Hands-on Ex 5 · Multivariate Data"
           - href: Hands-on_Ex/Hands-on_Ex06/index.qmd
             text: "Hands-on Ex 6 · Network & Text Data"
+          - href: Hands-on_Ex/Hands-on_Ex07/index.qmd
+            text: "Hands-on Ex 7 · Time-oriented Data"
       - text: "Take-home Ex"
         menu:
           - href: Take-home_Ex/Take-home_Ex01/index.qmd

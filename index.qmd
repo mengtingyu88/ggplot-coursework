@@ -336,6 +336,12 @@ include-in-header:
       <p>Modelling email networks and turning text into graphs with tidygraph, ggraph & tidytext.</p>
       <span class="arrow">→</span>
     </a>
+    <a class="ex-card" href="Hands-on_Ex/Hands-on_Ex07/index.html">
+      <div class="num">Exercise <strong>07</strong></div>
+      <h4>Time-oriented Data</h4>
+      <p>Calendar heatmaps, cycle plots and slopegraphs for temporal patterns and trends.</p>
+      <span class="arrow">→</span>
+    </a>
   </div>
 </div>
 
