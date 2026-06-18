@@ -24,6 +24,8 @@ website:
             text: "Hands-on Ex 6 · Network & Text Data"
           - href: Hands-on_Ex/Hands-on_Ex07/index.qmd
             text: "Hands-on Ex 7 · Time-oriented Data"
+          - href: Hands-on_Ex/Hands-on_Ex08/index.qmd
+            text: "Hands-on Ex 8 · Geospatial Visualisation"
       - text: "Take-home Ex"
         menu:
           - href: Take-home_Ex/Take-home_Ex01/index.qmd

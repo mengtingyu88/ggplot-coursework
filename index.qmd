@@ -342,6 +342,12 @@ include-in-header:
       <p>Calendar heatmaps, cycle plots and slopegraphs for temporal patterns and trends.</p>
       <span class="arrow">→</span>
     </a>
+    <a class="ex-card" href="Hands-on_Ex/Hands-on_Ex08/index.html">
+  <div class="num">Exercise <strong>08</strong></div>
+  <h4>Geospatial Visualisation</h4>
+  <p>Choropleth, proportional symbol and analytical maps with tmap and sf.</p>
+  <span class="arrow">→</span>
+</a>
   </div>
 </div>
 

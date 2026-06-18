@@ -1,0 +1,837 @@
+---
+title: "Hands-on Exercise 8: Geospatial Visualisation and Analytical Mapping with tmap"
+author: "Meng Tingyu"
+date: "June 15, 2026"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show the code"
+    code-tools: true
+execute:
+  eval: true
+  echo: true
+  warning: false
+  message: false
+  freeze: true
+---
+
+# Overview
+
+This exercise pulls together three related strands of geospatial visualisation, all built on the `tmap` package. I work through them in an order that made sense to me as I learned:
+
+1. First I build **choropleth maps**, where enumeration units (planning subzones) are shaded by an attribute value. This is the foundation for everything else.
+2. Then I move to **proportional symbol maps**, where point locations are sized by a numeric variable instead of filling polygons.
+3. Finally I do **analytical mapping**, where the classification itself is designed to reveal rates and extreme values (percentile maps and box maps).
+
+The thread connecting all three is the same `tm_shape() + layer` grammar, so once I understood the building blocks in the first part, the rest came together quickly.
+
+## Getting started
+
+The core package for this whole exercise is `tmap`. Around it I need `sf` for handling geospatial data and `tidyverse` for importing, tidying and wrangling. I load everything with `pacman::p_load()` so that any missing package is installed first.
+
+```{r}
+pacman::p_load(sf, tmap, tidyverse)
+```
+
+::: callout-note
+## Why only tidyverse?
+I do not install `readr`, `tidyr` and `dplyr` separately because all three are already part of `tidyverse`. Loading the meta-package gives me `read_csv()`, `pivot_wider()`, `mutate()`, `filter()`, `group_by()` and `select()` in one go.
+:::
+
+# Part A: Choropleth Mapping
+
+## The data
+
+I use two datasets to build the Singapore choropleth map:
+
+- **Master Plan 2014 Subzone Boundary (Web)** in ESRI shapefile format. This is the geospatial layer giving the polygon boundaries of every planning subzone, projected in SVY21.
+- **respopagesextod2011to2020.csv**, an aspatial table of Singapore residents by planning area, subzone, age group, sex and dwelling type. It has no coordinates, but its `PA` and `SZ` fields let me geocode it onto the shapefile.
+
+## Importing geospatial data into R
+
+I use `st_read()` from `sf` to read the shapefile into a simple feature data frame called `mpsz`. The `dsn` argument points to the folder and `layer` names the shapefile (without extension).
+
+```{r}
+mpsz <- st_read(dsn = "data/MP14_SUBZONE_WEB_PL",
+                layer = "MP14_SUBZONE_WEB_PL")
+```
+
+I inspect the object to confirm it imported as a `MULTIPOLYGON` feature collection with 323 features projected in SVY21.
+
+```{r}
+mpsz
+```
+
+::: callout-note
+## Why only the first 10 records show
+`sf` data frames print only the first ten features by design, the same way a tibble truncates its rows. The full 323 features are still there, the console is just keeping the output readable.
+:::
+
+## Importing attribute data into R
+
+Next I read the aspatial population table with `read_csv()` and store it as `popdata`.
+
+```{r}
+popdata <- read_csv("data/respopagesextod2011to2020.csv")
+```
+
+## Data preparation
+
+Before mapping, I need a clean table holding only the 2020 values, with the derived fields the assignment asks for:
+
+- **YOUNG**: age groups 0-4 up to 20-24
+- **ECONOMY ACTIVE**: age groups 25-29 up to 60-64
+- **AGED**: age 65 and above
+- **TOTAL**: all age groups
+- **DEPENDENCY**: the ratio of (young + aged) against the economy active group
+
+### Data wrangling
+
+I filter to 2020, sum the population by planning area, subzone and age group, then pivot the age groups into columns so each age band becomes its own field. After that I use `rowSums()` over the right column ranges to build the four aggregates and the dependency ratio.
+
+```{r}
+popdata2020 <- popdata %>%
+  filter(Time == 2020) %>%
+  group_by(PA, SZ, AG) %>%
+  summarise(`POP` = sum(`Pop`)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = AG,
+              values_from = POP) %>%
+  mutate(YOUNG = rowSums(.[3:6])
+         + rowSums(.[12])) %>%
+  mutate(`ECONOMY ACTIVE` = rowSums(.[7:11]) +
+           rowSums(.[13:15])) %>%
+  mutate(`AGED` = rowSums(.[16:21])) %>%
+  mutate(`TOTAL` = rowSums(.[3:21])) %>%
+  mutate(`DEPENDENCY` = (`YOUNG` + `AGED`)
+         / `ECONOMY ACTIVE`) %>%
+  select(`PA`, `SZ`, `YOUNG`,
+         `ECONOMY ACTIVE`, `AGED`,
+         `TOTAL`, `DEPENDENCY`)
+```
+
+::: callout-warning
+## The column indices are positional, so order matters
+The `rowSums(.[3:6])` style depends on the exact column positions produced by `pivot_wider()`. If the age group labels ever sort differently, those index ranges would silently grab the wrong columns. I kept the pivot output and the index ranges side by side and checked the column names before trusting the totals.
+:::
+
+### Joining the attribute and geospatial data
+
+There is one catch before the join: the `PA` and `SZ` values in the population table are a mix of upper and lower case, while `SUBZONE_N` and `PLN_AREA_N` in the shapefile are all uppercase. So I convert `PA` and `SZ` to uppercase first, and drop any rows with no economy active population.
+
+```{r}
+popdata2020 <- popdata2020 %>%
+  mutate(across(c(PA, SZ), toupper)) %>%
+  filter(`ECONOMY ACTIVE` > 0)
+```
+
+Now I join with `left_join()`, keeping `mpsz` on the left so the result stays an `sf` data frame. The common key is `SUBZONE_N` on the geospatial side and `SZ` on the attribute side.
+
+```{r}
+mpsz_pop2020 <- left_join(mpsz, popdata2020,
+                          by = c("SUBZONE_N" = "SZ"))
+```
+
+::: callout-tip
+## Why the left table has to be the sf object
+`left_join()` keeps the class of its first argument. By putting the `sf` data frame `mpsz` first, the geometry column is preserved and the output remains mappable. If I had joined the other way round, I would have gotten a plain tibble with no geometry.
+:::
+
+I save the joined object so I do not have to rebuild it every time.
+
+```{r}
+#| eval: false
+write_rds(mpsz_pop2020, "data/mpszpop2020.rds")
+```
+
+## Plotting a choropleth quickly with qtm()
+
+The fastest way to draw a choropleth in `tmap` is `qtm()`. I switch to static plotting mode and map the `DEPENDENCY` field.
+
+```{r}
+tmap_mode("plot")
+qtm(mpsz_pop2020,
+    fill = "DEPENDENCY")
+```
+
+::: callout-note
+## My takeaway on qtm()
+`qtm()` is perfect for a quick look while I am still exploring. The cost is control: it is hard to tune the legend, classification or furniture of individual layers. The moment I want a presentation-quality map, I switch to the full `tm_shape()` grammar below.
+:::
+
+## Building a choropleth with tmap elements
+
+The grammar always starts with `tm_shape()` to declare the data, followed by one or more layers. Here is the full cartographic version I am aiming for, with classification, legend, title, borders, compass, grid and a source credit.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons(fill = "DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "quantile",
+                n = 5,
+                values = "brewer.blues"),
+              fill.legend = tm_legend(
+                title = "Dependency ratio")) +
+  tm_title("Distribution of Dependency Ratio by planning subzone") +
+  tm_layout(frame = TRUE) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_compass(type = "8star", size = 2) +
+  tm_grid(alpha = 0.2) +
+  tm_credits("Source: Planning Sub-zone boundary from Urban Redevelopment Authority (URA)\n and Population data from Department of Statistics DOS",
+             position = c("left", "bottom"))
+```
+
+### Drawing a base map
+
+The simplest possible map is `tm_shape()` plus `tm_polygons()` with no variable. This just draws the subzone outlines.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons()
+```
+
+### Drawing a choropleth with tm_polygons()
+
+To shade by a variable, I pass the field name straight to `tm_polygons()`.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY")
+```
+
+A few defaults worth remembering: the default binning style is `"pretty"`, the default palette is `YlOrRd`, and missing values are shaded grey.
+
+### Separating tm_fill() and tm_borders()
+
+`tm_polygons()` is really a wrapper around `tm_fill()` (which colours the polygons) and `tm_borders()` (which draws the outlines). Using `tm_fill()` alone gives shading with no boundary lines.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_fill("DEPENDENCY")
+```
+
+Adding `tm_borders()` puts the subzone boundaries back. The `fill_alpha` controls transparency from 0 (fully transparent) to 1 (opaque), and I can also set `col`, `lwd` and `lty`.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons(fill = "DEPENDENCY") +
+  tm_borders(lwd = 0.01,
+             fill_alpha = 0.1)
+```
+
+::: callout-note
+## My takeaway on the fill / border split
+Understanding that `tm_polygons` = `tm_fill` + `tm_borders` was the unlock for me. Once I saw it that way, every "why is my border too thick" or "why is the fill hiding the lines" question answered itself. I now reach for the two separate layers whenever I want fine control.
+:::
+
+## Data classification methods
+
+Classification groups a large set of observations into a handful of ranges. `tmap` offers ten styles: `fixed`, `sd`, `equal`, `pretty` (default), `quantile`, `kmeans`, `hclust`, `bclust`, `fisher` and `jenks`. I set the style inside `tm_scale_intervals()`.
+
+A quantile classification with 5 classes:
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "jenks",
+                n = 5)) +
+  tm_borders(fill_alpha = 0.5)
+```
+
+The same map with equal interval classification:
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "equal",
+                n = 5)) +
+  tm_borders(fill_alpha = 0.5)
+```
+
+::: callout-warning
+## Maps can lie
+The quantile and equal maps use the same data but tell very different visual stories. Quantile spreads observations evenly across classes, so every colour band holds roughly the same number of subzones. Equal interval splits the value range into equal-width bins, which here pushes almost everything into the lowest class because of a few extreme outliers. Choosing a classification is a design decision, not a neutral default, and it directly changes what the reader concludes.
+:::
+
+::: callout-note
+## My DIY observation on number of classes
+When I redrew the map with 2, 6, 10 and 20 classes, more classes gave finer gradation but quickly became hard to read, because the human eye cannot reliably separate that many shades. Two classes lost almost all the spatial pattern. For this data, five to six classes was the sweet spot between detail and legibility.
+:::
+
+## Custom breaks
+
+For full control I set the breakpoints myself. In `tmap`, the breaks vector includes both the minimum and the maximum, so to get n classes I need n+1 values in increasing order. Before choosing them I look at the summary statistics.
+
+```{r}
+summary(mpsz_pop2020$DEPENDENCY)
+```
+
+Based on the quartiles I set breaks at 0.60, 0.70, 0.80 and 0.90, plus a sensible minimum of 0 and maximum of 1.00.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              breaks = c(0, 0.60, 0.70, 0.80, 0.90, 1.00)) +
+  tm_borders(fill_alpha = 0.5)
+```
+
+## Colour scheme
+
+`tmap` accepts user-defined ramps or predefined ColorBrewer palettes. I assign the palette to `values` inside `tm_scale_intervals()`.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "quantile",
+                n = 5,
+                values = "brewer.greens")) +
+  tm_borders(fill_alpha = 0.5)
+```
+
+To reverse the direction of the ramp I prefix it with a minus sign.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "quantile",
+                n = 5,
+                values = "-brewer.greens")) +
+  tm_borders(fill_alpha = 0.5)
+```
+
+## Map layouts
+
+### Legend
+
+`tm_legend()` controls the placement, format and appearance of the legend. Here I add a title and use a Jenks classification.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons("DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "jenks",
+                n = 5,
+                values = "brewer.greens"),
+              fill.legend = tm_legend(
+                title = "Dependency ratio")) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("Distribution of Dependency Ratio by planning subzone \n(Jenks classification)")
+```
+
+### Map style
+
+`tmap_style()` changes the overall look. The example below uses the classic style.
+
+::: callout-warning
+## Mixing tmap v3 and v4 syntax
+This classic-style example uses the older `tm_fill(style =, palette =)` and `tm_borders(alpha =)` arguments rather than the newer `tm_scale_intervals()` and `fill_alpha`. Under tmap 4, the old arguments still run but produce deprecation messages. I kept it as written so the original lesson is intact, but in my own maps above I use the v4 grammar consistently to stay future-proof.
+:::
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_fill("DEPENDENCY",
+          style = "quantile",
+          palette = "-Greens") +
+  tm_borders(alpha = 0.5) +
+  tmap_style("classic")
+```
+
+### Cartographic furniture
+
+`tm_compass()`, `tm_scale_bar()` and `tm_grid()` add the compass, scale bar and grid lines that finish off a map.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons(fill = "DEPENDENCY",
+              fill.scale = tm_scale_intervals(
+                style = "quantile",
+                n = 5,
+                values = "brewer.blues"),
+              fill.legend = tm_legend(
+                title = "Dependency ratio")) +
+  tm_title("Distribution of Dependency Ratio by planning subzone") +
+  tm_layout(frame = TRUE) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_compass(type = "8star", size = 2) +
+  tm_grid(alpha = 0.2) +
+  tm_credits("Source: Planning Sub-zone boundary from Urban Redevelopment Authority (URA)\n and Population data from Department of Statistics DOS",
+             position = c("left", "bottom"))
+```
+
+I reset the style back to the default afterwards so later maps are not affected.
+
+```{r}
+tmap_style("white")
+```
+
+::: callout-tip
+## tmap_style is sticky
+`tmap_style()` sets a global option that persists across all later maps in the session, not just the one chunk. I learned to reset it to `"white"` immediately after a styled example, otherwise every downstream map silently inherited the classic look.
+:::
+
+## Small multiple (facet) maps
+
+Small multiples place several maps side by side, which is ideal for comparing variables or showing change. `tmap` supports three ways to build them.
+
+### Method 1: multiple values to an aesthetic argument
+
+Passing a vector of field names to `tm_fill()` produces one facet per field.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_fill(c("YOUNG", "AGED"),
+          style = "equal",
+          palette = "Blues") +
+  tm_layout(legend.position = c("right", "bottom")) +
+  tm_borders(alpha = 0.5) +
+  tmap_style("white")
+```
+
+I can even give each facet its own classification and palette.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_polygons(c("DEPENDENCY", "AGED"),
+              style = c("equal", "quantile"),
+              palette = list("Blues", "Greens")) +
+  tm_layout(legend.position = c("right", "bottom"))
+```
+
+### Method 2: group-by variable in tm_facets()
+
+Here the facets come from a categorical field (`REGION_N`) rather than from multiple variables.
+
+```{r}
+tm_shape(mpsz_pop2020) +
+  tm_fill("DEPENDENCY",
+          style = "quantile",
+          palette = "Blues",
+          thres.poly = 0) +
+  tm_facets(by = "REGION_N",
+            free.coords = TRUE) +
+  tm_layout(legend.show = FALSE,
+            title.position = c("center", "center"),
+            title.size = 20) +
+  tm_borders(alpha = 0.5)
+```
+
+### Method 3: stand-alone maps with tmap_arrange()
+
+I can also build each map separately and arrange them. This gives the most control because every map is fully independent.
+
+```{r}
+youngmap <- tm_shape(mpsz_pop2020) +
+  tm_polygons("YOUNG",
+              style = "quantile",
+              palette = "Blues")
+
+agedmap <- tm_shape(mpsz_pop2020) +
+  tm_polygons("AGED",
+              style = "quantile",
+              palette = "Blues")
+
+tmap_arrange(youngmap, agedmap, asp = 1, ncol = 2)
+```
+
+::: callout-note
+## My takeaway on choosing a facet method
+The aesthetic-argument method is quickest when I am comparing a fixed list of variables. `tm_facets()` is best when the split is driven by a category in the data, like region or year. `tmap_arrange()` wins when the maps genuinely differ in classification, palette or scale and I want each one tuned separately.
+:::
+
+## Mapping with a selection criterion
+
+Instead of faceting, I can subset the data with normal `[ ]` indexing to map only the features that meet a condition. Here I map only the Central Region and add a legend histogram.
+
+```{r}
+tm_shape(mpsz_pop2020[mpsz_pop2020$REGION_N == "CENTRAL REGION", ]) +
+  tm_fill("DEPENDENCY",
+          style = "quantile",
+          palette = "Blues",
+          legend.hist = TRUE,
+          legend.is.portrait = TRUE,
+          legend.hist.z = 0.1) +
+  tm_layout(legend.outside = TRUE,
+            legend.height = 0.45,
+            legend.width = 5.0,
+            legend.position = c("right", "bottom"),
+            frame = FALSE) +
+  tm_borders(alpha = 0.5)
+```
+
+# Part B: Visualising Geospatial Point Data
+
+Choropleth maps fill polygons, but some phenomena are better shown as points sized by magnitude. **Proportional symbol maps** use symbol size to represent counts. If the sizes are continuous they are called proportional symbols; if grouped into classes they are graduated symbols. Here I map the winnings of Singapore Pools outlets.
+
+## The data
+
+The dataset is `SGPools_svy21.csv`. It has seven columns, including `XCOORD` and `YCOORD` holding the outlet coordinates in the SVY21 projected system, an `OUTLET TYPE` field, and a `Gp1Gp2 Winnings` count.
+
+## Importing and preparing the data
+
+I read the csv into a tibble and check it imported correctly with `list()`.
+
+```{r}
+sgpools <- read_csv("data/SGPools_svy21.csv")
+list(sgpools)
+```
+
+## Creating an sf data frame from aspatial data
+
+Because the table already has coordinates, I can turn it into an `sf` point layer with `st_as_sf()`. I give the X column first then the Y column, and I set the CRS to EPSG 3414, which is Singapore SVY21.
+
+```{r}
+sgpools_sf <- st_as_sf(sgpools,
+                       coords = c("XCOORD", "YCOORD"),
+                       crs = 3414)
+```
+
+::: callout-warning
+## Coordinate order and CRS are easy to get wrong
+Two things bite here. First, `coords` must be longitude/X then latitude/Y, in that order. Swapping them silently puts every point in the wrong place. Second, the `crs` has to match the coordinate system the numbers were recorded in. These values are SVY21, so 3414 is correct; passing 4326 (WGS84) would misproject everything.
+:::
+
+I confirm the result is a `POINT` feature collection with the right CRS.
+
+```{r}
+list(sgpools_sf)
+```
+
+## Drawing a proportional symbol map
+
+Proportional symbol maps work best interactively, so I switch `tmap` into view mode.
+
+```{r}
+#| eval: false
+tmap_mode("view")
+```
+
+### Starting with a plain point map
+
+`tm_bubbles()` draws fixed-size points. I set a constant fill, size, outline colour and line width.
+
+```{r}
+#| eval: false
+tm_shape(sgpools_sf) +
+  tm_bubbles(fill = "red",
+             size = 1,
+             col = "black",
+             lwd = 1)
+```
+
+### Making the symbols proportional
+
+To make the map proportional I assign a numeric field to `size`. Now each bubble's area reflects its winnings.
+
+```{r}
+#| eval: false
+tm_shape(sgpools_sf) +
+  tm_bubbles(fill = "red",
+             size = "Gp1Gp2 Winnings",
+             col = "black",
+             lwd = 1)
+```
+
+### Adding a colour dimension
+
+I encode a second variable, `OUTLET TYPE`, into the fill colour, so the map shows both magnitude (size) and category (colour) at once.
+
+```{r}
+#| eval: false
+tm_shape(sgpools_sf) +
+  tm_bubbles(fill = "OUTLET TYPE",
+             size = "Gp1Gp2 Winnings",
+             col = "black",
+             lwd = 1)
+```
+
+### Faceting with synchronised maps
+
+A nice feature of view mode is that faceting still works, and `sync = TRUE` links the zoom and pan across panels so they always show the same extent.
+
+```{r}
+#| eval: false
+tm_shape(sgpools_sf) +
+  tm_bubbles(fill = "OUTLET TYPE",
+             size = "Gp1Gp2 Winnings",
+             col = "black",
+             lwd = 1) +
+  tm_facets(by = "OUTLET TYPE",
+            nrow = 1,
+            sync = TRUE)
+```
+
+I switch back to plot mode before moving on, so the interactive viewer does not interfere with the static maps in Part C.
+
+```{r}
+tmap_mode("plot")
+```
+
+::: callout-note
+## My takeaway on proportional symbols
+Size and area encode quantity well, but I have to remember that humans underestimate area differences. A bubble that looks "twice as big" rarely reads as twice the value. The interactive view helps because I can hover for the exact number, but for a static map I would pair the bubbles with a clear size legend.
+:::
+
+# Part C: Analytical Mapping
+
+The first two parts were about display. This part is about analysis: choosing classifications that surface rates and extreme values, in the spirit of bringing exploratory data analysis onto the map. I use a prepared Nigeria water point dataset at the Local Government Area (LGA) level.
+
+## Importing the data
+
+```{r}
+NGA_wp <- read_rds("data/NGA_wp.rds")
+```
+
+## Basic choropleth mapping
+
+I start by mapping raw counts: total water points and functional water points, side by side.
+
+```{r}
+p1 <- tm_shape(NGA_wp) +
+  tm_polygons(fill = "wp_functional",
+              fill.scale = tm_scale_intervals(
+                style = "equal",
+                n = 10,
+                values = "brewer.blues"),
+              fill.legend = tm_legend(
+                position = c("right", "bottom"))) +
+  tm_borders(lwd = 0.1,
+             fill_alpha = 1) +
+  tm_title("Distribution of functional water point by LGAs")
+
+p2 <- tm_shape(NGA_wp) +
+  tm_polygons(fill = "total_wp",
+              fill.scale = tm_scale_intervals(
+                style = "equal",
+                n = 10,
+                values = "brewer.blues"),
+              fill.legend = tm_legend(
+                position = c("right", "bottom"))) +
+  tm_borders(lwd = 0.1,
+             fill_alpha = 1) +
+  tm_title("Distribution of total water point by LGAs")
+
+tmap_arrange(p2, p1, nrow = 1)
+```
+
+## Choropleth maps for rates
+
+Counts are misleading here because water points are not evenly distributed in space. An LGA with many functional points might simply be an LGA with many points overall. To map the topic of interest rather than raw size, I convert counts to proportions.
+
+```{r}
+NGA_wp <- NGA_wp %>%
+  mutate(pct_functional = wp_functional / total_wp) %>%
+  mutate(pct_nonfunctional = wp_nonfunctional / total_wp)
+```
+
+Now I map the rate of functional water points.
+
+```{r}
+tm_shape(NGA_wp) +
+  tm_polygons(fill = "pct_functional",
+              fill.scale = tm_scale_intervals(
+                style = "equal",
+                n = 10,
+                values = "brewer.blues"),
+              fill.legend = tm_legend(
+                position = c("right", "bottom"))) +
+  tm_borders(lwd = 0.1,
+             fill_alpha = 1) +
+  tm_title("Rate map of functional water point by LGAs")
+```
+
+::: callout-note
+## My takeaway on rates versus counts
+This is the single most important idea in the whole exercise. Mapping counts answers "where are there many things", which almost always just reproduces a population or density map. Mapping rates answers the question I actually care about, "where is the proportion high or low". For any per-capita or per-total question, I now normalise before I map.
+:::
+
+## Percentile map
+
+A percentile map is a quantile map with six fixed categories: 0-1%, 1-10%, 10-50%, 50-90%, 90-99% and 99-100%. It is built to highlight the extremes at both tails. The breakpoints come from `quantile()` with an explicit cumulative probability vector, and both endpoints have to be included.
+
+### Data preparation
+
+First I drop records with missing values, since they would break the quantile computation.
+
+```{r}
+NGA_wp <- NGA_wp %>%
+  drop_na()
+```
+
+Then I build the percentile breakpoints. Note that I extract the variable with the geometry dropped, because base R functions like `quantile()` cannot handle the sticky geometry column.
+
+```{r}
+percent <- c(0, .01, .1, .5, .9, .99, 1)
+var <- NGA_wp["pct_functional"] %>%
+  st_set_geometry(NULL)
+quantile(var[, 1], percent)
+```
+
+::: callout-warning
+## Geometry travels with sf columns
+When I subset a single column from an `sf` data frame, the geometry comes along for the ride. That is fine for mapping, but base R functions like `quantile()` choke on it. The fix is `st_set_geometry(NULL)`, which strips the geometry and leaves a plain vector the maths can work with.
+:::
+
+### Why write a function
+
+Rather than copy and paste the same mapping code for every variable, I write functions. The reasons are the same ones from R for Data Science: a named function documents intent, a single change propagates everywhere, and I stop introducing copy-paste mistakes like renaming a variable in one place but not another.
+
+### A helper to extract a clean vector
+
+This small function pulls a named variable out of an `sf` data frame as a plain, unnamed vector.
+
+```{r}
+get.var <- function(vname, df) {
+  v <- df[vname] %>%
+    st_set_geometry(NULL)
+  v <- unname(v[, 1])
+  return(v)
+}
+```
+
+### The percentile mapping function
+
+This wraps the whole percentile workflow: compute the breaks, then draw a two-layer map with custom labels.
+
+```{r}
+percentmap <- function(vnam, df, legtitle = NA, mtitle = "Percentile Map"){
+  percent <- c(0, .01, .1, .5, .9, .99, 1)
+  var <- get.var(vnam, df)
+  bperc <- quantile(var, percent)
+  tm_shape(df) +
+    tm_polygons() +
+  tm_shape(df) +
+    tm_polygons(vnam,
+                title = legtitle,
+                breaks = bperc,
+                palette = "Blues",
+                labels = c("< 1%", "1% - 10%", "10% - 50%",
+                           "50% - 90%", "90% - 99%", "> 99%")) +
+    tm_borders() +
+    tm_layout(main.title = mtitle,
+              title.position = c("right", "bottom"))
+}
+```
+
+I test it on total water points.
+
+```{r}
+percentmap("total_wp", NGA_wp)
+```
+
+## Box map
+
+A box map is an augmented quartile map with two extra categories for the lower and upper outliers, exactly like the whiskers and points of a boxplot translated onto a map. The break logic has to handle whether outliers actually exist on each side.
+
+I start by recalling what the boxplot of non-functional water points looks like.
+
+```{r}
+ggplot(data = NGA_wp,
+       aes(x = "",
+           y = wp_nonfunctional)) +
+  geom_boxplot()
+```
+
+### The boxbreaks function
+
+This computes the seven break points. The tricky part is the conditional logic: when there are no lower outliers, the lowest break starts at the minimum value rather than the lower fence, and similarly for the upper side.
+
+```{r}
+boxbreaks <- function(v, mult = 1.5) {
+  qv <- unname(quantile(v))
+  iqr <- qv[4] - qv[2]
+  upfence <- qv[4] + mult * iqr
+  lofence <- qv[2] - mult * iqr
+  # initialize break points vector
+  bb <- vector(mode = "numeric", length = 7)
+  # logic for lower and upper fences
+  if (lofence < qv[1]) {  # no lower outliers
+    bb[1] <- lofence
+    bb[2] <- floor(qv[1])
+  } else {
+    bb[2] <- lofence
+    bb[1] <- qv[1]
+  }
+  if (upfence > qv[5]) { # no upper outliers
+    bb[7] <- upfence
+    bb[6] <- ceiling(qv[5])
+  } else {
+    bb[6] <- upfence
+    bb[7] <- qv[5]
+  }
+  bb[3:5] <- qv[2:4]
+  return(bb)
+}
+```
+
+I reuse the same `get.var()` helper from the percentile section.
+
+```{r}
+get.var <- function(vname, df) {
+  v <- df[vname] %>% st_set_geometry(NULL)
+  v <- unname(v[, 1])
+  return(v)
+}
+```
+
+I test the break logic on non-functional water points.
+
+```{r}
+var <- get.var("wp_nonfunctional", NGA_wp)
+boxbreaks(var)
+```
+
+### The boxmap function
+
+Finally I wrap it all into a `boxmap()` function with six labelled classes, from lower outlier through the quartiles to upper outlier.
+
+```{r}
+boxmap <- function(vnam, df,
+                   legtitle = NA,
+                   mtitle = "Box Map",
+                   mult = 1.5){
+  var <- get.var(vnam, df)
+  bb <- boxbreaks(var)
+  tm_shape(df) +
+    tm_polygons() +
+  tm_shape(df) +
+    tm_fill(vnam, title = legtitle,
+            breaks = bb,
+            palette = "Blues",
+            labels = c("lower outlier",
+                       "< 25%",
+                       "25% - 50%",
+                       "50% - 75%",
+                       "> 75%",
+                       "upper outlier")) +
+    tm_borders() +
+    tm_layout(main.title = mtitle,
+              title.position = c("left", "top"))
+}
+
+tmap_mode("plot")
+boxmap("wp_nonfunctional", NGA_wp)
+```
+
+::: callout-note
+## My takeaway on extreme value maps
+Percentile maps and box maps are exploratory data analysis brought onto the map. A normal quantile map hides outliers inside the top or bottom class, but these designs give outliers their own categories, so the LGAs that are genuinely unusual stand out instead of being averaged away. When my goal is to find anomalies rather than show the general pattern, these are the classifications I reach for.
+:::
+
+# Reflections
+
+Working through all three parts, a few principles stuck with me:
+
+- The `tm_shape() + layer` grammar is consistent across polygons, points and analytical maps, so the effort I put into understanding the first choropleth paid off everywhere else.
+- Classification is a design decision, not a neutral step. The same data under quantile, equal interval, percentile or box classification can tell genuinely different stories, which is why "maps lie" is a warning worth taking seriously.
+- Rates almost always beat counts when the underlying units are unevenly distributed, because counts tend to just re-draw a density map.
+- Writing small functions like `get.var()`, `percentmap()` and `boxmap()` made the analytical maps reusable and far less error-prone than copying chunks around.
+
+The other thing I am keeping in mind for later work is the tmap version split. The course materials mix v3 arguments (`style =`, `palette =`, `alpha =`) with v4 arguments (`tm_scale_intervals()`, `fill_alpha`, `tm_legend()`). Both run under tmap 4, but the v3 style throws deprecation messages, so I default to the v4 grammar in my own maps.
