@@ -34,6 +34,8 @@ website:
             text: "Take-home Ex 1 · Executive Summary"
           - href: Take-home_Ex/Take-home_Ex02/index.qmd
             text: "Take-home Ex 2 · Anatomy of a Broken Embargo"
+          - href: Hands-on_Ex/Hands-on_Ex09/index.qmd
+            text: "Hands-on Ex 9 · Information Dashboard Design"
       - about.qmd
 
 format:

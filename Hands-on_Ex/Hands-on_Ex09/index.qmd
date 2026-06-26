@@ -1,0 +1,481 @@
+---
+title: "Hands-on Exercise 9: Information Dashboard Design with R"
+author: "Meng Tingyu"
+date: "June 25, 2026"
+date-modified: "last-modified"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the code"
+    fig-width: 8
+    fig-height: 6
+execute:
+  eval: true
+  echo: true
+  warning: false
+  message: false
+  freeze: true
+---
+
+# What I want to get out of this exercise
+
+A dashboard is supposed to let someone read the state of a business in a few seconds, so the visual vocabulary has to be very compact. In this exercise I am working through three families of dashboard widgets and learning when each one is the right tool:
+
+- **Bullet charts** built directly in `ggplot2`. These compress a target, a few qualitative bands, and the actual value into a single horizontal bar.
+- **Sparklines** built in `ggplot2`. These are tiny line charts that show a trend without axes or gridlines, so they fit inside a table cell.
+- **Industry style dashboards** assembled with `gt` and `gtExtras` for static reporting, and with `reactable` and `reactablefmtr` for interactive reporting.
+
+My goal is not to copy the chunks but to understand the layering logic behind a bullet chart and the list-column requirement behind the table widgets, because those two ideas are where I expect to make mistakes later.
+
+# Getting started
+
+These are the packages I need. I have grouped them by what they do so I remember the role of each one.
+
+```{r}
+pacman::p_load(tidyverse, lubridate, ggthemes,
+               gt, gtExtras, reactable, reactablefmtr)
+```
+
+A short note to myself on each package:
+
+- `tidyverse` covers the import, wrangling, and plotting backbone (`readr`, `dplyr`, `ggplot2`, `tibble`, `forcats`, and friends).
+- `lubridate` makes the date handling (`year()`, `month()`) clean.
+- `ggthemes` gives me `theme_tufte()`, which strips the chart down to ink only, exactly what a sparkline needs.
+- `gt` is the table engine, and `gtExtras` adds the `gt_plt_bullet()` and `gt_plt_sparkline()` helpers.
+- `reactable` plus `reactablefmtr` produce the interactive version of the same widgets.
+
+I am using `pacman::p_load()` so that any missing package is installed and loaded in one step instead of writing separate `install.packages()` and `library()` calls.
+
+# Importing the Coffee Chain data
+
+The source data is a Microsoft Access database called `Coffee Chain.mdb`. The textbook imports it with `RODBC`, but this is the first place I hit a real trap, so I am recording the import code with `eval: false` and explaining why.
+
+```{r}
+#| eval: false
+library(RODBC)
+con <- odbcConnectAccess2007("data/Coffee Chain.mdb")
+coffeechain <- sqlFetch(con, "CoffeeChain Query")
+write_rds(coffeechain, "data/CoffeeChain.rds")
+odbcClose(con)
+```
+
+::: callout-warning
+## The 32 bit RODBC trap
+
+`odbcConnectAccess2007()` only works against a 32 bit Access driver, but my RStudio runs on 64 bit R. If I run the chunk above as is, the connection fails with a driver architecture mismatch.
+
+The clean way around it is to do the `.mdb` to `.rds` conversion once in a 32 bit R session (or have it provided), then read the `.rds` from then on. The `.rds` is architecture independent, so the rest of the exercise runs fine on my normal 64 bit setup. That is why I set `eval: false` on the import chunk and load the saved `.rds` below instead.
+:::
+
+```{r}
+coffeechain <- read_rds("data/CoffeeChain.rds")
+```
+
+I am keeping a flat `data/` folder rather than a nested `data/rds/` path, so my reference is simply `data/CoffeeChain.rds`. With that loaded, every later chunk just wrangles `coffeechain` in memory.
+
+# Bullet chart with ggplot2
+
+A bullet chart is a richer replacement for a gauge. It needs four things in one bar: the actual value, the target, and two or three qualitative bands (poor, fair, good) drawn as shades of grey behind the bar. `ggplot2` has no dedicated geom for this, so the trick is to stack several `geom_col()` layers and let drawing order do the work.
+
+First I aggregate sales and budgeted sales to the product level.
+
+```{r}
+product <- coffeechain %>%
+  group_by(Product) %>%
+  summarise(target = sum(`Budget Sales`),
+            current = sum(Sales)) %>%
+  ungroup()
+```
+
+Then I build the chart layer by layer.
+
+```{r}
+ggplot(product, aes(Product, current)) +
+  geom_col(aes(Product, max(target) * 1.01),
+           fill = "grey85", width = 0.85) +
+  geom_col(aes(Product, target * 0.75),
+           fill = "grey60", width = 0.85) +
+  geom_col(aes(Product, target * 0.5),
+           fill = "grey50", width = 0.85) +
+  geom_col(aes(Product, current),
+           width = 0.35,
+           fill = "black") +
+  geom_errorbar(aes(y = target,
+                    x = Product,
+                    ymin = target,
+                    ymax = target),
+                width = 0.4,
+                colour = "red",
+                linewidth = 1) +
+  coord_flip()
+```
+
+::: callout-important
+## The layering order is the whole trick
+
+The reason this works is that later layers paint on top of earlier ones, so I must draw from the widest, lightest band down to the narrowest, darkest one:
+
+1. The lightest band (`grey85`) is the full background range, drawn first and widest.
+2. The two darker bands (`grey60`, `grey50`) are progressively shorter, so they stack visibly in front of the lightest one.
+3. The thin black bar (`width = 0.35`) is the actual value, sitting in front of all the bands.
+4. The red `geom_errorbar` collapsed to a single point (`ymin = ymax = target`) is the target marker line.
+
+If I reversed the order and drew the lightest band last, it would cover everything else and the chart would look empty. So drawing order is not cosmetic here, it is the mechanism.
+
+One small modernisation: I replaced `size = 1` on the errorbar with `linewidth = 1`, because `ggplot2` 3.4 onward deprecates `size` for line and bar widths.
+:::
+
+# Sparklines with ggplot2
+
+A sparkline is a line chart with everything removed except the line itself, so it reads as a trend at a glance. I am building the full statistical version with a quartile band and highlighted min and max points before I move to the table helpers, because doing it by hand shows me what the helpers are doing for me later.
+
+## Preparing the data
+
+```{r}
+sales_report <- coffeechain %>%
+  filter(Date >= "2013-01-01") %>%
+  mutate(Month = month(Date)) %>%
+  group_by(Month, Product) %>%
+  summarise(Sales = sum(Sales), .groups = "drop") %>%
+  select(Month, Product, Sales)
+```
+
+Next I find, per product, the month of the minimum sale, the month of the maximum sale, and the last month, so I can mark those points and label the endpoint.
+
+```{r}
+mins <- group_by(sales_report, Product) %>%
+  slice(which.min(Sales))
+maxs <- group_by(sales_report, Product) %>%
+  slice(which.max(Sales))
+ends <- group_by(sales_report, Product) %>%
+  filter(Month == max(Month))
+```
+
+And I compute the 25th and 75th percentiles per product, then join them back so every row carries its product band.
+
+```{r}
+quarts <- sales_report %>%
+  group_by(Product) %>%
+  summarise(quart1 = quantile(Sales, 0.25),
+            quart2 = quantile(Sales, 0.75)) %>%
+  right_join(sales_report, by = "Product")
+```
+
+## Drawing the sparklines
+
+```{r}
+#| fig-height: 9
+ggplot(sales_report, aes(x = Month, y = Sales)) +
+  facet_grid(Product ~ ., scales = "free_y") +
+  geom_ribbon(data = quarts,
+              aes(ymin = quart1, ymax = quart2),
+              fill = "grey90") +
+  geom_line(linewidth = 0.3) +
+  geom_point(data = mins, col = "red") +
+  geom_point(data = maxs, col = "blue") +
+  geom_text(data = mins, aes(label = Sales), vjust = -1) +
+  geom_text(data = maxs, aes(label = Sales), vjust = 2.5) +
+  geom_text(data = ends, aes(label = Sales), hjust = 0, nudge_x = 0.5) +
+  geom_text(data = ends, aes(label = Product), hjust = 0, nudge_x = 1.0) +
+  expand_limits(x = max(sales_report$Month) +
+                  (0.25 * (max(sales_report$Month) - min(sales_report$Month)))) +
+  scale_x_continuous(breaks = seq(1, 12, 1)) +
+  scale_y_continuous(expand = c(0.1, 0)) +
+  theme_tufte(base_size = 3, base_family = "Helvetica") +
+  theme(axis.title = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        strip.text = element_blank())
+```
+
+::: callout-note
+## Two things I had to fix to make this run
+
+1. The original ribbon was written as `aes(ymin = quart1, max = quart2)`, but `geom_ribbon` does not understand `max`. It needs `ymax`. With `max` the band silently fails to draw, so I corrected it to `ymax = quart2`.
+2. I changed `geom_line(size = 0.3)` to `linewidth = 0.3` for the same 3.4 deprecation reason as the bullet chart.
+
+The design logic itself is what I want to remember: `facet_grid(Product ~ ., scales = "free_y")` stacks one tiny panel per product with its own y scale, `theme_tufte()` removes the frame, and the blank axis and strip text leave only the line, the band, and the marked points. That is exactly the sparkline idea, maximum data, minimum ink.
+:::
+
+# Static dashboard with gt and gtExtras
+
+Now I switch from drawing the widgets by hand to dropping them into a real table. `gtExtras` gives me the bullet chart and the sparkline as single function calls inside a `gt` table.
+
+## A simple bullet chart in a table
+
+```{r}
+product %>%
+  gt() %>%
+  gt_plt_bullet(column = current,
+                target = target,
+                width = 60,
+                palette = c("lightblue", "black")) %>%
+  gt_theme_538()
+```
+
+This is far less code than the hand built version, because `gt_plt_bullet()` reads the `current` and `target` columns and renders the bar for me. The `gt_theme_538()` call gives it the clean FiveThirtyEight look.
+
+## Sparklines in a table
+
+The single most important rule for `gtExtras` is that the plotting functions expect a **list column**, not a normal numeric column. So I first reshape monthly sales into a list per product.
+
+```{r}
+report <- coffeechain %>%
+  mutate(Year = year(Date)) %>%
+  filter(Year == "2013") %>%
+  mutate(Month = month(Date, label = TRUE, abbr = TRUE)) %>%
+  group_by(Product, Month) %>%
+  summarise(Sales = sum(Sales), .groups = "drop")
+```
+
+```{r}
+report %>%
+  group_by(Product) %>%
+  summarise(`Monthly Sales` = list(Sales), .groups = "drop")
+```
+
+::: callout-tip
+## Why `list(Sales)` and not just `Sales`
+
+When I write `summarise(\`Monthly Sales\` = list(Sales))`, each product collapses to one row whose cell holds all twelve monthly values bundled as a list. That is what lets `gt_plt_sparkline()` draw a whole mini chart inside one cell. If I forget the `list()` and pass a plain vector, the function has nothing to plot per row and the call fails. This list-column requirement is the thing I most need to remember about `gtExtras`.
+:::
+
+Now the sparkline table.
+
+```{r}
+report %>%
+  group_by(Product) %>%
+  summarise(`Monthly Sales` = list(Sales), .groups = "drop") %>%
+  gt() %>%
+  gt_plt_sparkline(`Monthly Sales`, same_limit = FALSE)
+```
+
+I set `same_limit = FALSE` so each product is scaled to its own range. With `TRUE`, every sparkline would share one y axis, which would flatten the small products against the big ones.
+
+## Adding summary statistics
+
+A sparkline shows shape, but a reader often also wants the min, max, and average. I compute those separately first.
+
+```{r}
+sales <- report %>%
+  group_by(Product) %>%
+  summarise(Min = min(Sales, na.rm = TRUE),
+            Max = max(Sales, na.rm = TRUE),
+            Average = mean(Sales, na.rm = TRUE))
+```
+
+Then I build the list column again and join the two together.
+
+```{r}
+spark <- report %>%
+  group_by(Product) %>%
+  summarise(`Monthly Sales` = list(Sales), .groups = "drop")
+
+sales_data <- left_join(sales, spark, by = "Product")
+```
+
+::: callout-note
+## I always name the join key
+
+The textbook writes `left_join(sales, spark)` with no `by` argument. It works because both frames share `Product`, but it prints a message guessing the key, and on a more complex frame it could silently join on the wrong column. So I make the key explicit with `by = "Product"`. It is a small habit, but it is exactly the kind of silent bug I want to avoid.
+:::
+
+## The combined statistics plus sparkline table
+
+```{r}
+sales_data %>%
+  gt() %>%
+  gt_plt_sparkline(`Monthly Sales`, same_limit = FALSE)
+```
+
+## Adding a bullet chart alongside
+
+Finally I bring the actual versus target back in, so one table carries the statistics, the trend, and the progress to target side by side. This is what a real one page report looks like.
+
+```{r}
+bullet <- coffeechain %>%
+  filter(Date >= "2013-01-01") %>%
+  group_by(Product) %>%
+  summarise(Target = sum(`Budget Sales`),
+            Actual = sum(Sales), .groups = "drop")
+
+sales_data <- sales_data %>%
+  left_join(bullet, by = "Product")
+```
+
+```{r}
+sales_data %>%
+  gt() %>%
+  gt_plt_sparkline(`Monthly Sales`) %>%
+  gt_plt_bullet(column = Actual,
+                target = Target,
+                width = 28,
+                palette = c("lightblue", "black")) %>%
+  gt_theme_538()
+```
+
+This single table is the payoff of the static section. A manager can scan the average, follow the monthly shape in the sparkline, and check whether actual reached target in the bullet bar, all in one row per product.
+
+# Interactive dashboard with reactable and reactablefmtr
+
+The static `gt` table is great for a printed report, but for a live dashboard I want the reader to be able to sort, page, and hover. `reactable` gives me the interactive table, and `reactablefmtr` gives me interactive sparklines through the `dataui` JavaScript library.
+
+## Installing dataui
+
+`dataui` is not on CRAN, so it has to come from GitHub. This is a one time setup, so I keep it with `eval: false`.
+
+```{r}
+#| eval: false
+remotes::install_github("timelyportfolio/dataui")
+library(dataui)
+```
+
+```{r}
+library(dataui)
+```
+
+## Interactive sparklines
+
+Just like `gtExtras`, the interactive helpers want a list column. I noticed that the textbook overwrites `report` here, which means re-running chunks out of order can break the earlier `gt` pipeline. To keep my notebook safe to re-run, I create a new object `report_list` instead of clobbering `report`.
+
+```{r}
+report_list <- report %>%
+  group_by(Product) %>%
+  summarise(`Monthly Sales` = list(Sales), .groups = "drop")
+```
+
+```{r}
+reactable(
+  report_list,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkline(report_list)
+    )
+  )
+)
+```
+
+## Showing all products on one page
+
+The default page size is 10, which cuts off three of my 13 products. `defaultPageSize` fixes that.
+
+```{r}
+reactable(
+  report_list,
+  defaultPageSize = 13,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkline(report_list)
+    )
+  )
+)
+```
+
+## Highlighting points and labelling the ends
+
+```{r}
+reactable(
+  report_list,
+  defaultPageSize = 13,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkline(
+        report_list,
+        highlight_points = highlight_points(
+          min = "red", max = "blue"),
+        labels = c("first", "last")
+      )
+    )
+  )
+)
+```
+
+Here `highlight_points()` marks the lowest month in red and the highest in blue, and `labels = c("first", "last")` prints the January and December values at the two ends. That is the interactive equivalent of the `geom_point` and `geom_text` work I did by hand earlier.
+
+## Adding a reference line
+
+```{r}
+reactable(
+  report_list,
+  defaultPageSize = 13,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkline(
+        report_list,
+        highlight_points = highlight_points(
+          min = "red", max = "blue"),
+        statline = "mean"
+      )
+    )
+  )
+)
+```
+
+`statline = "mean"` draws and labels the average line, which gives the eye a baseline to read the swings against.
+
+## Adding a bandline instead
+
+```{r}
+reactable(
+  report_list,
+  defaultPageSize = 13,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkline(
+        report_list,
+        highlight_points = highlight_points(
+          min = "red", max = "blue"),
+        line_width = 1,
+        bandline = "innerquartiles",
+        bandline_color = "green"
+      )
+    )
+  )
+)
+```
+
+The `bandline = "innerquartiles"` shades the interquartile range behind the line, which is the same grey90 ribbon idea from my `ggplot2` sparkline, just rendered interactively.
+
+## Switching from sparkline to sparkbar
+
+When I care about discrete monthly comparisons rather than a continuous trend, a bar version reads better. `react_sparkbar()` is a drop in replacement.
+
+```{r}
+reactable(
+  report_list,
+  defaultPageSize = 13,
+  columns = list(
+    Product = colDef(maxWidth = 200),
+    `Monthly Sales` = colDef(
+      cell = react_sparkbar(
+        report_list,
+        highlight_bars = highlight_bars(
+          min = "red", max = "blue"),
+        bandline = "innerquartiles",
+        statline = "mean")
+    )
+  )
+)
+```
+
+Note the small naming difference, `highlight_bars()` instead of `highlight_points()`, which makes sense because there are no longer point markers to colour, only bars.
+
+# My takeaway
+
+Three ideas stuck with me from this exercise.
+
+First, the bullet chart taught me that `ggplot2` layering order is a design tool, not an afterthought. The whole effect depends on painting the widest, lightest band first and the actual value last, and once I saw that, the stack of `geom_col()` calls stopped looking arbitrary.
+
+Second, the list column is the gateway to every table widget here. Both `gtExtras` and `reactablefmtr` need each row to carry a bundled list of values, and the moment I internalised `summarise(col = list(x))`, all the sparkline and sparkbar functions became easy. This is the single most reusable thing I learned.
+
+Third, I now have a clear sense of when to reach for which tool. For a fixed printed report I will use `gt` plus `gtExtras`, because the output is clean and self contained. For a live dashboard where the reader needs to sort, page, and hover, I will use `reactable` plus `reactablefmtr`. The widgets express the same information, but the delivery format decides which family fits.
+
+I also collected a few practical fixes I will carry forward: read the data from `.rds` to dodge the 32 bit RODBC driver problem, use `linewidth` rather than the deprecated `size` for lines, write `ymax` not `max` inside `geom_ribbon`, always name my join keys, and avoid overwriting an object that an earlier chunk still depends on.
